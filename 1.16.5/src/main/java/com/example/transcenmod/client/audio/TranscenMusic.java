@@ -7,33 +7,17 @@ import net.minecraft.client.audio.ISound;
 import net.minecraft.client.audio.SoundHandler;
 import net.minecraft.util.ResourceLocation;
 
-/**
- * Looping background track for the Transcendence encounter.
- *
- * <p>Played as a {@code MUSIC}-category sound with looping enabled, so it repeats until the HUD
- * switches off or the level is left. Only one instance is tracked, and the controller is
- * idempotent: calling {@link #start()} while already playing does nothing.
- *
- * <p>The audio file is not shipped with the mod. {@code sounds.json} points at
- * {@code assets/transcenmod/sounds/music/hell_river.ogg}; while that file is absent the controller
- * refuses to start and logs one actionable line, instead of letting {@code SoundHandler} flood the
- * console with unknown-sound errors every tick. See the README section "Background music".
- */
+// looping track, MUSIC category, one instance tracked, start() is idempotent
+// the ogg is not in the jar,sounds.json names it anyway
+// pre-checking the file and logging one line beats SoundHandler spamming unknown-sound every tick
 public final class TranscenMusic {
 
-    /**
-     * The audio file as a resolvable resource, <b>including</b> the {@code sounds/} prefix.
-     *
-     * <p>{@code SoundHandler} resolves sound files as {@code <namespace>:sounds/<entry>}, where
-     * {@code <entry>} comes from {@code sounds.json}. So even though the {@code "name"} in
-     * {@code sounds.json} is {@code transcenmod:music/hell_river}, the underlying resource is
-     * {@code transcenmod:sounds/music/hell_river.ogg} and that is the path that has to be used for
-     * an existence check.
-     */
+    // exists-check path, sounds/ prefix included - SoundHandler resolves namespace:sounds/<entry>
+    // sounds.json "name" omits that prefix,so the full resource path is the only thing worth testing
     public static final ResourceLocation OGG =
             new ResourceLocation(TranscenMod.MODID + ":sounds/music/hell_river.ogg");
 
-    /** Human-readable location for log messages and docs. */
+    // where to drop the file, for the log line and the README
     public static final String OGG_RELATIVE_PATH =
             "src/main/resources/assets/transcenmod/sounds/music/hell_river.ogg";
 
@@ -42,7 +26,7 @@ public final class TranscenMusic {
 
     private TranscenMusic() {}
 
-    /** Starts the loop if it is not already running. Safe to call every tick. */
+    // starts only when nothing is tracked and the ogg resolves, so call it every tick
     public static void start() {
         if (playing != null) {
             return;
@@ -62,7 +46,7 @@ public final class TranscenMusic {
         soundManager().play(instance);
     }
 
-    /** Stops the loop, if one is running. */
+    // stops only what this class started, a null handle means nothing to do
     public static void stop() {
         if (playing == null) {
             return;
@@ -71,16 +55,10 @@ public final class TranscenMusic {
         playing = null;
     }
 
-    /**
-     * Drives the loop from the client tick.
-     *
-     * <p>Restarts whenever the sound has actually stopped, not merely whenever the tracked reference is
-     * null. Those are different conditions, and the difference is the whole of "other mods interrupt the
-     * music": another mod can stop this sound through the shared {@code SoundHandler} without this class
-     * being told, and the stale reference it leaves behind keeps {@link #start()} believing the track is
-     * already running. Asking the sound manager whether it is still playing is the only version that
-     * recovers.
-     */
+    // called from the client tick
+    // restarts when the sound has actually stopped not when the reference is merely null,those differ
+    // another mod can stop it through the shared SoundHandler with no callback here,so the stale handle
+    // keeps start() believing the track still runs - asking the manager is the only way to recover
     public static void tick(boolean shouldBePlaying) {
         if (!shouldBePlaying) {
             stop();
@@ -89,13 +67,10 @@ public final class TranscenMusic {
         if (playing != null && soundManager().isPlaying(playing)) {
             return;
         }
-        // Always stop the tracked instance before starting another.
-        //
-        // The previous version only dropped the reference. That is wrong whenever isActive reports false
-        // for a sound that is in fact still running: the handle is discarded, a second instance starts,
-        // and both play at once. Repeated ticks layered them further, which is exactly the "the music
-        // stacks up" report. Stopping first makes the worst case a brief restart instead of an
-        // ever-growing pile of the same track.
+        // stop first,always - dropping the reference alone is the "music stacks up" bug
+        // isPlaying false does not prove the sound is gone, the handle is lost and a second instance
+        // starts on top of the first, repeated ticks pile them higher
+        // worst case here is one brief restart
         stop();
         start();
     }
@@ -108,10 +83,7 @@ public final class TranscenMusic {
         return Minecraft.getInstance().getSoundHandler();
     }
 
-    /**
-     * True when the OGG exists. Resolved through the client's resource manager, so a resource pack
-     * can also supply the file instead of the mod jar.
-     */
+    // through the client resource manager, so a resource pack can supply the ogg instead of the jar
     private static boolean oggPresent() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.getResourceManager() == null) {

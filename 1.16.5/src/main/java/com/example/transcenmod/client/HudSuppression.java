@@ -3,13 +3,8 @@ package com.example.transcenmod.client;
 import com.example.transcenmod.TranscenMod;
 import net.minecraft.client.Minecraft;
 
-/**
- * Whether the encounter is running on this client.
- *
- * <p>On 1.16.5 there is no Forge overlay registry and no {@code ForgeGui}; the whole HUD is drawn by
- * {@code IngameGui.renderIngameGui}. Suppression therefore happens by intercepting that one method, and
- * the only question left here is whether the encounter is running.
- */
+// 1.16.5 has no forge overlay registry and no ForgeGui, IngameGui.renderIngameGui draws the whole HUD
+// so suppression is an intercept on that one method, all that is left here is "is the encounter running"
 public final class HudSuppression {
 
     private HudSuppression() {}

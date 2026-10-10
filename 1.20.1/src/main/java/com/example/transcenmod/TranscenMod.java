@@ -46,29 +46,17 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Transcendence Zombie.
- *
- * <p>This mod deliberately reaches into Minecraft's internals: it removes entities from the
- * client/server entity storages by hand and walks the entity section maps directly.
- *
- * <p>What AccessTransformer does here is widen every member that this mod touches -- by reflection
- * <em>or</em> by direct access -- from {@code private}/{@code package-private}/{@code protected} to
- * {@code public} at class-load time. See {@code src/main/resources/META-INF/accesstransformer.cfg}.
- * Making them public has two effects:
- * <ol>
- *   <li>the reflective lookups keep working in both dev and production, because the widened
- *       modifier survives reobfuscation (the AT is re-applied at runtime by Forge);</li>
- *       members through plain Java field/method access, which is the compile-time proof that the
- *       AT file actually targets the right SRG members.</li>
- * </ol>
- */
+// reaches into minecraft internals - entities are pulled from the client and server entity
+// storages by hand and the entity section maps are walked directly
+// the accesstransformer widens every member this mod touches to public at class-load time
+// reflective lookups keep working in dev and production, the widened modifier survives
+// reobfuscation because forge re-applies the AT at runtime
+// plain field and method access is the compile-time proof that the AT targets the right SRG members
 @Mod(TranscenMod.MODID)
 public class TranscenMod {
 
     public static final String MODID = "transcenmod";
 
-    /** Shared logger, so every subsystem reports through one place. */
     public static final org.slf4j.Logger LOGGER =
             com.mojang.logging.LogUtils.getLogger();
 
@@ -79,7 +67,7 @@ public class TranscenMod {
     public static final DeferredRegister<CreativeModeTab> TABS =
             DeferredRegister.create(Registries.CREATIVE_MODE_TAB, MODID);
 
-    /** Tracking range has to cover the 1024-block follow range, so the type asks for the maximum. */
+    // tracking range must cover the 1024-block follow range, so this asks for the maximum
     public static final RegistryObject<EntityType<TranscenZombie>> TRANSCEN_ZOMBIE = ENTITIES.register(
             "transcenzombie",
             () -> EntityType.Builder.of(TranscenZombie::new, MobCategory.MONSTER)
@@ -94,7 +82,7 @@ public class TranscenMod {
                     .clientTrackingRange(32)
                     .build("transcen_lightning_bolt"));
 
-    /** The spawn egg. Right-clicking it spawns the zombie and arms the HUD. */
+    // the spawn egg - right-click spawns the zombie and arms the HUD
     public static final RegistryObject<Item> TRANSCEN_SPAWN_EGG = ITEMS.register(
             "transcen_zombie_spawn_egg",
             () -> new SpawnTranscenZombieItem(new Item.Properties(), 0x8B2BE2, 0xE22B7A));
@@ -106,69 +94,42 @@ public class TranscenMod {
                     .displayItems((params, output) -> output.accept(TRANSCEN_SPAWN_EGG.get()))
                     .build());
 
-    /**
-     * Whether this mod's protection systems are running. Left-clicking with the egg toggles it.
-     *
-     * <p><b>What it covers, and what it must never cover.</b> It covers the systems around the zombie:
-     * the revival that puts a removed zombie back, the periodic sweep, and the bar, the overlay and the
-     * music. While it is false those stop, which is what lets a wipe stay wiped.
-     *
-     * <p>It deliberately does <b>not</b> reach the entity's own defences. setRemoved, remove, hurt,
-     * setHealth and the position guard are the zombie's core and stay in force whatever this says.
-     * Switching the protection off must not turn the creature into an ordinary mob; it only stops this
-     * mod from working to keep it present.
-     */
+    // whether this mod's protection systems are running,left-clicking with the egg toggles it
+    // covers the revival the periodic sweep the bar the overlay and the music,so a wipe stays wiped
+    // it must never reach the zombie's own defences - setRemoved remove hurt setHealth and the
+    // position guard stay in force whatever this says
+    // off must not turn the creature into an ordinary mob,it only stops this mod keeping it present
     public static volatile boolean defenceEnabled = true;
 
-    /**
-     * Entity classes the encounter has annihilated, which may not re-enter the world.
-     *
-     * <p>Annihilation removes what is present; this is what stops the same creature walking straight back
-     * in a tick later and being removed again, forever. The ban is deliberately permanent for the session
-     * and deliberately covers the whole class -- the encounter is not meant to be survivable by ordinary
-     * means.
-     */
+    // classes the encounter has annihilated, they may not re-enter the world
+    // annihilation removes what is present,this stops the same creature walking back in a tick
+    // later and being removed forever - the ban is permanent for the session and covers the class
     public static final Set<Class<?>> BANNED_CLASSES = ConcurrentHashMap.newKeySet();
 
-    /** Where each zombie was last seen, so a removed zombie can be put back. */
+    // last seen position, so a removed zombie can be put back
     public static final Map<UUID, Vec3> ZOMBIE_POSITIONS = new ConcurrentHashMap<>();
 
-    /**
-     * Facing of each zombie when it was last seen.
-     *
-     * <p>Kept next to the position because a revived zombie should come back as the entity it was, and
-     * an entity that reappears facing due south is visibly a different one. Stored separately rather
-     * than folded into {@code ZOMBIE_POSITIONS} so the position map keeps its plain
-     * {@code UUID -> Vec3} shape that the rest of the mod reasons about.
-     */
+    // kept beside the position, a revived zombie should come back as the entity it was
+    // stored separately from ZOMBIE_POSITIONS, so that map keeps its plain UUID -> Vec3 shape
     public static final Map<UUID, Float> ZOMBIE_YAW = new ConcurrentHashMap<>();
     public static final Map<UUID, Float> ZOMBIE_PITCH = new ConcurrentHashMap<>();
-    /**
-     * When each doomed entity's two-second display window started, keyed by UUID. The value is the
-     * level game time at which it was detected, so the countdown is derived rather than ticked.
-     */
+    // level game time at which each doomed entity's two-second display window started, keyed by UUID
+    // the countdown is derived from it,not ticked
     public static final Map<UUID, Long> ANNIHILATION_DOOMED_ON = new ConcurrentHashMap<>();
 
-    /** Last known position of every entity being annihilated, for the strikes and the death puff. */
+    // last known position of every entity being annihilated,feeds the strikes and the death puff
     public static final Map<UUID, Vec3> ANNIHILATION_POSITIONS = new ConcurrentHashMap<>();
 
-    /** Ten ticks of strikes, then the client-side removal. */
+    // ten ticks of strikes, then the client-side removal
     public static final int CLIENT_REMOVE_DELAY_TICKS = 10;
 
-    /**
-     * Looping background track played while the Transcendence HUD is up.
-     *
-     * <p>A plain {@link SoundEvent} rather than a registered one: it only ever plays on the client,
-     * so it does not need to exist in the registry, and {@code SoundManager} resolves it straight
-     * from {@code assets/transcenmod/sounds.json}.
-     *
-     * <p>The audio file itself is not shipped -- see README "Background music" for where to drop the
-     * {@code .ogg}.
-     */
+    // plain SoundEvent,not a registered one - it only plays client-side so it needs no registry entry
+    // SoundManager resolves it straight from assets/transcenmod/sounds.json
+    // the .ogg itself is not shipped, see README "Background music"
     public static final SoundEvent TRANSCEN_MUSIC =
             SoundEvent.createVariableRangeEvent(new ResourceLocation(MODID + ":music.transcendence"));
 
-    /** Set on the client when the HUD has been armed by right-clicking the spawn egg. */
+    // set on the client once the spawn egg arms the HUD
     public static boolean HUD_ACTIVE = false;
     public static boolean SHOW_DEATH_SCREEN = false;
 
@@ -200,19 +161,19 @@ public class TranscenMod {
                 MarkDoomedPacket::new, MarkDoomedPacket::handle);
         NETWORK.registerMessage(4, HudSyncPacket.class, HudSyncPacket::encode,
                 HudSyncPacket::new, HudSyncPacket::handle);
-        // Left-click with the egg: toggles the protection.
+        // left-click with the egg,toggles the protection
         NETWORK.registerMessage(5, WipeRequestPacket.class, WipeRequestPacket::encode,
                 WipeRequestPacket::new, WipeRequestPacket::handle);
-        // Broadcast: the encounter is over, drop the latch and the local copies.
+        // broadcast - the encounter is over,drop the latch and the local copies
         NETWORK.registerMessage(6, WipeEndedPacket.class, WipeEndedPacket::encode,
                 WipeEndedPacket::new, WipeEndedPacket::handle);
 
     }
 
     private void clientSetup(final FMLClientSetupEvent event) {
-        // Registered reflectively by class name: this file is loaded on dedicated servers too, and a
-        // direct reference to a client-only class in its constant pool would break that. The client
-        // classes register their own packet hooks in static initialisers.
+        // this file also loads on dedicated servers,so the client-only classes are only ever touched
+        // as class literals here
+        // the client classes register their own packet hooks in static initialisers
         MinecraftForge.EVENT_BUS.register(com.example.transcenmod.client.ClientEvents.class);
         MinecraftForge.EVENT_BUS.register(com.example.transcenmod.client.DoomedRenderer.class);
     }
@@ -223,8 +184,7 @@ public class TranscenMod {
     }
 
     private void registerAttributes(EntityAttributeCreationEvent event) {
-        // The stat block lives in TranscenZombie#createAttributes so there is exactly one source of
-        // truth for it.
+        // the stat block lives in TranscenZombie#createAttributes, one source of truth
         event.put(TRANSCEN_ZOMBIE.get(), TranscenZombie.createAttributes().build());
     }
 

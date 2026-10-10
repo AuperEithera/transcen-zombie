@@ -18,20 +18,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Manual entity removal straight out of the level's entity storages.
- *
- * <p>The whole point of this class is that vanilla's removal path is not used. It unlinks the
- * entity from {@code EntitySectionStorage -> EntitySection -> ChunkEntitySections#byClass}, from
- * {@code EntityStorage#byUuid}/{@code byId}, from {@code EntityTickList#active}, and it finally
- * resets {@code Entity#isAddedToWorld}, {@code Entity#valid} and
- * {@code Entity#levelCallback = EntityInLevelCallback.NULL}.
- *
- * <p>Every one of those members is widened to {@code public} by
- * {@code META-INF/accesstransformer.cfg}, which is what makes the reflective lookups below resolve
- * reliably in both development and production instead of relying on the JVM's
- * {@code setAccessible} escape hatch against a sealed module.
- */
+// Manual entity removal,vanilla's removal path is not used
+// unlinks the entity from EntitySectionStorage->EntitySection->ChunkEntitySections#byClass,EntityStorage#byUuid/#byId
+// and EntityTickList#active, then resets the Entity#isAddedToWorld Entity#valid Entity#levelCallback flags
+// Accesstransformer.cfg widens all of those to public so the reflective lookups resolve in dev and in production
+// SetAccessible against a sealed module does not
 public final class CustomEntityRemover {
 
     private CustomEntityRemover() {}
@@ -39,29 +30,20 @@ public final class CustomEntityRemover {
     @SuppressWarnings("unchecked")
     public static void removeEntity(Entity entity) {
         if (entity.level() instanceof ServerLevel) { ServerLevel serverLevel = (ServerLevel) entity.level();
-            // Detach the server's networking view first, so nothing about this removal can reach a
-            // client. See detachFromClientTracking.
+            // Detach server tracking first, otherwise the despawn reaches the client
+            // See detachFromClientTracking
             detachFromClientTracking(serverLevel, entity);
         }
         removeEntityInternal(entity);
     }
 
-    /**
-     * Clears every player out of {@code ChunkMap.TrackedEntity.seenBy} for this entity.
-     *
-     * <p>This is what guarantees the removal is invisible to clients. Vanilla's own removal path
-     * ends in {@code ChunkMap.removeEntity -> broadcastAndSend}, which sends the despawn packet; the
-     * tracking entry is the thing that path acts on. Emptying it here means there is no tracked
-     * recipient left, so even a later vanilla sweep has nobody to notify -- the client keeps its
-     * copy, which is exactly what the two-second red shell needs.
-     *
-     * <p>The host is a Minecraft class in both dev and production, so the SRG ids are the reliable
-     * handle and the mapped names are the fallback.
-     */
+    // Clears every player out of ChunkMap.TrackedEntity.seenBy for this entity
+    // Vanilla removal ends in ChunkMap.removeEntity->broadcastAndSend and acts on this tracking entry
+    // Empty it and even a later vanilla sweep has nobody to notify, so the client keeps its copy
+    // which is what the two second red shell needs
+    // SRG ids are the reliable handle, mapped names are the fallback
     private static void detachFromClientTracking(ServerLevel level, Entity entity) {
         try {
-            // getChunkSource() and ServerChunkCache#chunkMap are public; only the tracking map itself
-            // needs widening.
             ServerChunkCache source = level.getChunkSource();
             if (source == null || source.chunkMap == null) {
                 return;
@@ -79,7 +61,7 @@ public final class CustomEntityRemover {
                 set.clear();
             }
         } catch (Exception ignored) {
-            // Best effort: the storage surgery below is what actually removes the entity.
+            // Best effort,the storage surgery below is what actually removes the entity
         }
     }
 
@@ -112,8 +94,7 @@ public final class CustomEntityRemover {
                     if (isTicking || entity.isAlwaysTicking()) {
                         Object tickingEntities = ReflectionAccess.getFieldRelaxed(clientLevel, "tickingEntities");
                         tickingEntities.getClass().getMethod("ensureActiveIsNotIterated").invoke(tickingEntities);
-                        // EntityTickList#active is a Set<Integer> in older versions and an
-                        // Int2ObjectMap<Entity> in 1.20.1; both accept remove(int).
+                        // EntityTickList#active is Set<Integer> in older versions,Int2ObjectMap<Entity> in 1.20.1,both accept remove(int)
                         Object active = ReflectionAccess.getFieldRelaxed(tickingEntities, "active");
                         if (active instanceof Set<?> set) {
                             set.remove(entity.getId());
@@ -186,7 +167,7 @@ public final class CustomEntityRemover {
 
             CapabilityDispatcher disp = (CapabilityDispatcher) ReflectionAccess.getFieldRelaxed(entity, "capabilities");
             if (disp != null) {
-                // Intentionally empty -- the original kept this branch as a hook point.
+                // Deliberately empty - a hook point
             }
 
             if (entity instanceof LivingEntity) { LivingEntity living = (LivingEntity) entity;
@@ -194,17 +175,13 @@ public final class CustomEntityRemover {
             }
 
         } catch (Exception ignored) {
-            // Original behaviour: swallow everything.
+            // Swallow everything,this is the original behaviour
         }
     }
 
-    /**
-     * Reads a field by trying each candidate name in turn.
-     *
-     * <p>The two names are simply alternatives: the mapped name resolves in a development workspace
-     * and the SRG id resolves in production, and which one wins depends only on the mapping
-     * generation. No superclass walk is needed -- all of these are declared on the passed class.
-     */
+    // The two names are alternatives not a hierarchy, the mapped name resolves in a dev workspace and the
+    // SRG id resolves in production, which one wins depends only on the mapping generation and no
+    // superclass walk is needed since all of these are declared on the passed class
     private static Object getFieldAny(Object target, String... candidates) {
         for (String name : candidates) {
             try {
@@ -212,7 +189,7 @@ public final class CustomEntityRemover {
                 field.setAccessible(true);
                 return field.get(target);
             } catch (NoSuchFieldException ignored) {
-                // try the next candidate
+                // Try the next candidate
             } catch (Exception ignored) {
                 return null;
             }

@@ -13,29 +13,16 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.LightningBolt;
 import org.joml.Matrix4f;
 
-/**
- * Vanilla lightning geometry, recoloured blood red.
- *
- * <p>This is a faithful port of {@code LightningBoltRenderer.render} and its private {@code quad}
- * helper, with exactly one change: the colour triple handed to {@code quad} is {@code (1, 0, 0)}
- * instead of vanilla's near-white {@code (0.45, 0.45, 0.5)}. Every offset, drift, random draw, taper
- * factor and vertex ordering is reproduced, so the bolt keeps the shape, spread and layered glow of a
- * real lightning bolt.
- *
- * <p><b>Why the geometry is duplicated rather than delegated.</b> The colour is written into the
- * vertex data, and wrapping the {@code MultiBufferSource} to rewrite it does not work: measured
- * counters showed {@code getBuffer} being reached while the {@code color} override was never called,
- * so that call path never reaches user code. Re-emitting the same vertices is the only way to change
- * the colour without changing the shape. A previous attempt that invented its own offsets produced a
- * straight beam rather than a bolt, which is why nothing here is hand-designed.
- */
+// vanilla geometry recoloured blood red, only the colour triple differs from LightningBoltRenderer
+// wrapping the MultiBufferSource cannot work - getBuffer is reached but the color override never is
+// so the vertices are re-emitted here, same offsets and draws as vanilla
+// invented offsets were tried once and produced a straight beam,not a bolt - do not hand design these
 public class TranscenLightningRenderer extends EntityRenderer<LightningBolt> {
 
-    /** The one deliberate difference from vanilla. */
+    // vanilla is near white 0.45 0.45 0.5
     private static final float COLOR_R = 1.0F;
     private static final float COLOR_G = 0.0F;
     private static final float COLOR_B = 0.0F;
-    /** Vanilla's per-vertex alpha for the bolt ribbon. */
     private static final float COLOR_A = 0.3F;
 
     public TranscenLightningRenderer(EntityRendererProvider.Context context) {
@@ -45,9 +32,9 @@ public class TranscenLightningRenderer extends EntityRenderer<LightningBolt> {
     @Override
     public void render(LightningBolt entity, float yaw, float partialTicks, PoseStack poseStack,
                        MultiBufferSource buffer, int packedLight) {
-        // ---- ported from LightningBoltRenderer.render ----
+        // ported from LightningBoltRenderer.render
 
-        // One shared kinked path, walked backwards so index 0 is the far end.
+        // built backwards so index 0 holds the far end
         float[] driftX = new float[8];
         float[] driftZ = new float[8];
         float totalX = 0.0F;
@@ -63,12 +50,10 @@ public class TranscenLightningRenderer extends EntityRenderer<LightningBolt> {
         VertexConsumer consumer = buffer.getBuffer(RenderType.lightning());
         Matrix4f matrix = poseStack.last().pose();
 
-        // Note: no pose translation here. A translate(-driftX[0], 0, -driftZ[0]) was tried to
-        // re-anchor the base and made the offset worse -- the sign was wrong and, because the same
-        // PoseStack is reused across entities, the shift compounded from bolt to bolt. Vanilla's
-        // placement is left exactly as it is.
+        // no pose translation here - a translate(-driftX[0], 0, -driftZ[0]) was tried, the sign was
+        // wrong and the reused PoseStack compounded the shift from bolt to bolt,vanilla placement stays
 
-        // Four rotation layers, three branches each.
+        // 4 rotation layers, 3 branches each
         for (int layer = 0; layer < 4; layer++) {
             RandomSource layerRandom = RandomSource.create(entity.seed);
             for (int branch = 0; branch < 3; branch++) {
@@ -104,7 +89,7 @@ public class TranscenLightningRenderer extends EntityRenderer<LightningBolt> {
                         widthOut *= (step - 1) * 0.1F + 1.0F;
                     }
 
-                    // Four faces of this segment. Only the colour arguments differ from vanilla.
+                    // 4 faces per segment, all args but the colour match vanilla
                     quad(matrix, consumer, x0, z0, step, x, z, COLOR_R, COLOR_G, COLOR_B,
                             u, v, widthIn, widthOut, false, false, true, false);
                     quad(matrix, consumer, x0, z0, step, x, z, COLOR_R, COLOR_G, COLOR_B,
@@ -120,13 +105,8 @@ public class TranscenLightningRenderer extends EntityRenderer<LightningBolt> {
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
     }
 
-    /**
-     * Ported from {@code LightningBoltRenderer.quad}.
-     *
-     * <p>Parameter order follows the original exactly: {@code (_x, _z, _step, _driftX, _driftZ,
-     * _red, _green, _blue, _uv1, _uv2, _widthIn, _widthOut, flipA..flipD)}. Both off-diagonal terms
-     * are scaled by the layer half-width, which is what gives the bolt its thickness.
-     */
+    // ported from LightningBoltRenderer.quad, argument order kept as vanilla
+    // both off diagonal terms scale by the layer half width,that is where the thickness comes from
     private static void quad(Matrix4f matrix, VertexConsumer consumer,
                              float x, float z, int step, float driftX, float driftZ,
                              float red, float green, float blue,
@@ -138,30 +118,23 @@ public class TranscenLightningRenderer extends EntityRenderer<LightningBolt> {
         float sideX = flipA ? widthOut : -widthOut;
         float sideZ = flipB ? widthIn : -widthIn;
 
-        // 1. bottom, corner A
         consumer.vertex(matrix, x + sideX, yBottom, z + sideZ)
                 .color(red, green, blue, COLOR_A)
                 .endVertex();
-        // 2. top, corner A
         consumer.vertex(matrix, driftX + sideX, yTop, driftZ + sideZ)
                 .color(red, green, blue, COLOR_A)
                 .endVertex();
-        // 3. top, corner B
         float sideXc = flipC ? widthOut : -widthOut;
         float sideZc = flipD ? widthIn : -widthIn;
         consumer.vertex(matrix, driftX + sideXc, yTop, driftZ + sideZc)
                 .color(red, green, blue, COLOR_A)
                 .endVertex();
-        // 4. bottom, corner B
         consumer.vertex(matrix, x + sideXc, yBottom, z + sideZc)
                 .color(red, green, blue, COLOR_A)
                 .endVertex();
     }
 
-    /**
-     * Irrelevant at runtime: the lightning shader samples no texture, so whatever is returned here is
-     * never read. The block atlas is named only because {@code EntityRenderer} requires a location.
-     */
+    // lightning shader samples no texture,this is never read - EntityRenderer just needs a location
     @Override
     public ResourceLocation getTextureLocation(LightningBolt entity) {
         return TextureAtlas.LOCATION_BLOCKS;

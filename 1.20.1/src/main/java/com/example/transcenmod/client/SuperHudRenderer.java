@@ -9,29 +9,18 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Method;
 
-/**
- * Invokes the vanilla {@code Gui.render} pass directly, bypassing {@code ForgeGui}'s override.
- *
- * <p>Needed because the override is where third-party HUD output is suppressed, and the vanilla interface
- * still has to be drawn. Calling the override again would re-enter the suppression -- infinite recursion --
- * so the parent implementation is reached explicitly.
- *
- * <p>This cannot be expressed with a mixin invoker: {@code @Invoker} resolves against the target class,
- * which is the very method being injected into. Reaching the parent needs the declared owner to be
- * {@code Gui}, which is what {@link MethodHandles.Lookup#findSpecial} with an explicit lookup class and an
- * {@code invokespecial} handle provides.
- *
- * <p>The method is named by its SRG id, read off this version's bytecode rather than carried over from the
- * other one: 1.19.2 has it as {@code m_93030_} and 1.20.1 as {@code m_280421_}, and the two also disagree
- * on the parameter type ({@code PoseStack} versus {@code GuiGraphics}). It is resolved once and cached; a
- * resolution failure is reported and remembered, so a mismatch shows up as one warning rather than a stack
- * trace per frame.
- */
+// calls the vanilla Gui.render pass straight, skipping ForgeGui's override
+// the override is where third-party HUD output gets suppressed, and vanilla still has to draw
+// re-entering it would suppress again and recurse forever,so reach the parent explicitly
+// a @Invoker mixin cannot do this - it resolves against the target class,which is the injected method itself
+// reaching the parent needs the declared owner to be Gui,that is what findSpecial plus an invokespecial handle gives
+// srg id is read off this version's bytecode not carried over - 1.19.2 m_93030_ 1.20.1 m_280421_
+// the two also disagree on the param type,PoseStack against GuiGraphics
+// resolved once and cached,a failure is logged and remembered so a mismatch is one warning not a stack trace per frame
 public final class SuperHudRenderer {
 
     private SuperHudRenderer() {}
 
-    /** The vanilla pass: {@code Gui.m_280421_(GuiGraphics, float)} on 1.20.1. */
     private static final String VANILLA_RENDER = "m_280421_";
 
     private static MethodHandle superRender;
@@ -54,13 +43,8 @@ public final class SuperHudRenderer {
     private static MethodHandle ownBar;
     private static boolean ownBarResolved;
 
-    /**
-     * Draws this mod's bar directly.
-     *
-     * <p>The event the bar normally draws from is raised inside the pass just skipped, so it has to be
-     * drawn here instead. Reached reflectively to keep common-side code from naming a client-only class,
-     * and guarded because a failure here must not take the frame down.
-     */
+    // the event this bar normally draws from is raised inside the pass just skipped
+    // reflected so common code never names a client-only class,guarded at the call site
     private static void drawOwnBar(GuiGraphics graphics) {
         try {
             if (!ownBarResolved) {
@@ -99,7 +83,6 @@ public final class SuperHudRenderer {
         return superRender;
     }
 
-    /** True when the vanilla pass could not be reached, so callers can choose to leave the HUD alone. */
     public static boolean isUnavailable() {
         handle();
         return unavailable;

@@ -19,20 +19,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Manual entity removal straight out of the level's entity storages.
- *
- * <p>The whole point of this class is that vanilla's removal path is not used. It unlinks the
- * entity from {@code EntitySectionStorage -> EntitySection -> ChunkEntitySections#byClass}, from
- * {@code EntityStorage#byUuid}/{@code byId}, from {@code EntityTickList#active}, and it finally
- * resets {@code Entity#isAddedToWorld}, {@code Entity#valid} and
- * {@code Entity#levelCallback = EntityInLevelCallback.NULL}.
- *
- * <p>Every one of those members is widened to {@code public} by
- * {@code META-INF/accesstransformer.cfg}, which is what makes the reflective lookups below resolve
- * reliably in both development and production instead of relying on the JVM's
- * {@code setAccessible} escape hatch against a sealed module.
- */
+// manual removal straight out of the level's entity storages,vanilla's path is not used
+// unlinks sectionStorage -> EntitySection -> byClass then byUuid/byId,EntityTickList#active
+// resets isAddedToWorld,valid and levelCallback = EntityInLevelCallback.NULL
+// every member touched is widened to public by META-INF/accesstransformer.cfg
+// that AT is what makes the lookups resolve in dev and prod - setAccessible alone is not enough
 public final class CustomEntityRemover {
 
     private CustomEntityRemover() {}
@@ -40,29 +31,20 @@ public final class CustomEntityRemover {
     @SuppressWarnings("unchecked")
     public static void removeEntity(Entity entity) {
         if (entity.getLevel() instanceof ServerLevel) { ServerLevel serverLevel = (ServerLevel) entity.getLevel();
-            // Detach the server's networking view first, so nothing about this removal can reach a
-            // client. See detachFromClientTracking.
+            // detach client tracking first,otherwise this removal can still send a despawn packet
             detachFromClientTracking(serverLevel, entity);
         }
         removeEntityInternal(entity);
     }
 
-    /**
-     * Clears every player out of {@code ChunkMap.TrackedEntity.seenBy} for this entity.
-     *
-     * <p>This is what guarantees the removal is invisible to clients. Vanilla's own removal path
-     * ends in {@code ChunkMap.removeEntity -> broadcastAndSend}, which sends the despawn packet; the
-     * tracking entry is the thing that path acts on. Emptying it here means there is no tracked
-     * recipient left, so even a later vanilla sweep has nobody to notify -- the client keeps its
-     * copy, which is exactly what the two-second red shell needs.
-     *
-     * <p>The host is a Minecraft class in both dev and production, so the SRG ids are the reliable
-     * handle and the mapped names are the fallback.
-     */
+    // empties ChunkMap.TrackedEntity.seenBy so no client is told about the removal
+    // vanilla removal ends in ChunkMap.removeEntity -> broadcastAndSend,which acts on this tracking entry
+    // with seenBy empty no recipient is left - a later vanilla sweep has nobody to notify
+    // the client keeps its copy,that is what the two second red shell needs
+    // SRG ids are the reliable handle since the host is a Minecraft class,mapped names are the fallback
     private static void detachFromClientTracking(ServerLevel level, Entity entity) {
         try {
-            // getChunkSource() and ServerChunkCache#chunkMap are public; only the tracking map itself
-            // needs widening.
+            // getChunkSource() and ServerChunkCache#chunkMap are public,only the tracking map needs widening
             ServerChunkCache source = level.getChunkSource();
             if (source == null || source.chunkMap == null) {
                 return;
@@ -80,7 +62,7 @@ public final class CustomEntityRemover {
                 set.clear();
             }
         } catch (Exception ignored) {
-            // Best effort: the storage surgery below is what actually removes the entity.
+            // best effort,the storage surgery below is what actually removes the entity
         }
     }
 
@@ -113,8 +95,8 @@ public final class CustomEntityRemover {
                     if (isTicking || entity.isAlwaysTicking()) {
                         Object tickingEntities = ReflectionAccess.getFieldRelaxed(clientLevel, "tickingEntities");
                         tickingEntities.getClass().getMethod("ensureActiveIsNotIterated").invoke(tickingEntities);
-                        // EntityTickList#active is a Set<Integer> in older versions and an
-                        // Int2ObjectMap<Entity> in 1.20.1; both accept remove(int).
+                        // EntityTickList#active is Set<Integer> in older versions,Int2ObjectMap<Entity> in 1.20.1
+                        // both take remove(int)
                         Object active = ReflectionAccess.getFieldRelaxed(tickingEntities, "active");
                         if (active instanceof Set<?> set) {
                             set.remove(entity.getId());
@@ -176,37 +158,25 @@ public final class CustomEntityRemover {
                 visibleEntityStorage.getClass().getMethod("remove", Object.class).invoke(visibleEntityStorage, entity);
                 serverLevel.getScoreboard().entityRemoved(entity);
 
-                // Release the UUID.
-                //
-                // This set is the reason a removed entity's id could never be reused. Vanilla's own
-                // removal path drops the id from it as part of the removal; doing the surgery by hand
-                // skips that, so the id stayed claimed forever afterwards. The manager's addEntityUuid
-                // then refuses every later attempt to put an entity with that UUID back into the world
-                // -- silently, with only a log warning -- which meant a "revived" zombie never actually
-                // existed in the level.
-                //
-                // The failure here is logged rather than swallowed. It was swallowed once, and that is
-                // exactly why the bug survived a round of "fixing": the AT line had taken effect, the
-                // code looked right, and the lookup was silently resolving to nothing at runtime.
+                // releasing this set is what lets the uuid be reused,vanilla drops the id during removal
+                // hand surgery skips that,so the id stayed claimed forever and addEntityUuid then refused
+                // every later add of that uuid - silently,with one log warning - the revived zombie never existed
+                // failures here are logged on purpose: swallowing them once is what hid exactly this bug
                 try {
                     Object knownUuids = null;
                     try {
                         knownUuids = ReflectionAccess.getFieldRelaxed(manager, "knownUuids");
                     } catch (Throwable notFound) {
-                        // Fallback: find any Set<UUID> on the manager by walking its declared fields. The
-                        // named lookup is preferred, but a hole in the alias table is exactly the kind of
-                        // failure that hid this bug once already, so the structural search is kept as a
-                        // second route rather than trusting one name to be right.
+                        // named lookup preferred,a hole in the alias table already hid this bug once
+                        // so walk the declared fields for any Set<UUID> instead of trusting one name
                         for (Class<?> c = manager.getClass(); c != null && c != Object.class;
                                 c = c.getSuperclass()) {
                             for (Field f : c.getDeclaredFields()) {
                                 if (!Set.class.isAssignableFrom(f.getType())) {
                                     continue;
                                 }
-                                // Probed defensively, for the same reason as in the release path:
-                                // fastutil's primitive sets implement java.util.Set and throw
-                                // ClassCastException when asked about a UUID. One unanswerable field must
-                                // not abort the search.
+                                // fastutil primitive sets implement java.util.Set yet throw ClassCastException on a UUID
+                                // one unanswerable field must not abort the search
                                 try {
                                     f.setAccessible(true);
                                     Object v = f.get(manager);
@@ -219,7 +189,7 @@ public final class CustomEntityRemover {
                                         break;
                                     }
                                 } catch (Throwable notApplicable) {
-                                    // Not a set of UUIDs.
+                                    // unreadable or not a uuid set,keep scanning
                                 }
                             }
                             if (knownUuids != null) {
@@ -253,13 +223,12 @@ public final class CustomEntityRemover {
 
             CapabilityDispatcher disp = (CapabilityDispatcher) ReflectionAccess.getFieldRelaxed(entity, "capabilities");
             if (disp != null) {
-                // Intentionally empty -- the original kept this branch as a hook point.
+                // intentionally empty,the original kept this branch as a hook point
             }
 
             if (entity instanceof LivingEntity) { LivingEntity living = (LivingEntity) entity;
-                // 1.19.2's Brain has no clearMemories; stopAll is the equivalent teardown. The cast is
-                // needed because getBrain() returns a wildcard capture, which is not assignable to the
-                // Brain<LivingEntity> that stopAll expects.
+                // 1.19.2 Brain has no clearMemories,stopAll is the equivalent teardown
+                // cast needed: getBrain() returns a wildcard capture,not assignable to Brain<LivingEntity>
                 @SuppressWarnings("unchecked")
                 net.minecraft.world.entity.ai.Brain<LivingEntity> brain =
                         (net.minecraft.world.entity.ai.Brain<LivingEntity>) living.getBrain();
@@ -267,17 +236,13 @@ public final class CustomEntityRemover {
             }
 
         } catch (Exception ignored) {
-            // Original behaviour: swallow everything.
+            // original behaviour,swallow everything
         }
     }
 
-    /**
-     * Reads a field by trying each candidate name in turn.
-     *
-     * <p>The two names are simply alternatives: the mapped name resolves in a development workspace
-     * and the SRG id resolves in production, and which one wins depends only on the mapping
-     * generation. No superclass walk is needed -- all of these are declared on the passed class.
-     */
+    // each candidate name is tried in turn,mapped name resolves in dev and the SRG id in production
+    // which one wins depends only on the mapping generation
+    // no superclass walk,every field here is declared on the passed class
     private static Object getFieldAny(Object target, String... candidates) {
         for (String name : candidates) {
             try {
@@ -285,7 +250,7 @@ public final class CustomEntityRemover {
                 field.setAccessible(true);
                 return field.get(target);
             } catch (NoSuchFieldException ignored) {
-                // try the next candidate
+                // next candidate
             } catch (Exception ignored) {
                 return null;
             }

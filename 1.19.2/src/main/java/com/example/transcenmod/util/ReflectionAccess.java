@@ -14,35 +14,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Reflective plumbing for the entity-storage surgery.
- *
- * <p><b>Nothing in here was rewritten.</b> {@link #getField(Object, String, String)} keeps its
- * original contract: look the field up by its Mojang-mapped name first, then by the SRG name, then
- * walk up the superclass chain, and hand back the value.
- *
- * <p>Two additions exist solely because of AccessTransformer:
- * <ul>
- *   <li>{@link #srgCandidates(String)} -- a small alias table, because the SRG id of a field is not
- *       always obvious and the original single hard-coded id was wrong for
- *       {@code ServerLevel.players}. The mapped name always wins, so behaviour is unchanged when
- *       the mapped name resolves.</li>
- *       self-check that reports whether the AT actually took effect for every member this mod
- *       touches. Useful for diagnosing a stale workspace.</li>
- * </ul>
- */
+// the version trap: a field is named one way in mojang mappings, another way in SRG
+// getField is the original, getFieldRelaxed adds the alias table srgCandidates
+// aliases only ever rescue the SRG fallback,the mapped name is always tried first
 public final class ReflectionAccess {
 
     private ReflectionAccess() {}
 
-    /**
-     * SRG aliases for members whose exact id depends on the mapping generation.
-     *
-     * <p>The first entry of every row is the id verified against the 1.20.1 SRG artifacts; the
-     * following entries keep the lookup alive across mapping refreshes. Because the Mojang-mapped
-     * name is always tried first, these aliases can never change behaviour in a workspace where the
-     * mapped name resolves -- they only rescue the SRG fallback.
-     */
+    // first id of every row was verified against the 1.20.1 SRG artifacts
+    // later ids keep the lookup alive across mapping refreshes
+    // a missing row is silent here - the caller's catch-all swallows it
     private static String[] srgCandidates(String mappedName) {
         switch (mappedName) {
             // Entity
@@ -60,12 +41,9 @@ public final class ReflectionAccess {
             // PersistentEntitySectionManager
             case "sectionStorage":      return new String[]{"f_157495_", "f_157588_"};
             case "visibleEntityStorage":return new String[]{"f_157494_", "f_157591_"};
-            // knownUuids decides whether a UUID may enter the world at all. It was missing from this
-            // table, and because the lookup failure is swallowed by the teardown's catch-all, removing
-            // an entity left its id claimed forever with no visible error: the zombie was then refused
-            // re-entry on every revival, so the repair loop never converged. A hole in this table is not
-            // a cosmetic problem -- the AT can have hit the field perfectly and the code still never
-            // reach it.
+            // knownUuids decides whether a uuid may enter the world at all
+            // it was missing here and the teardown's catch-all hid the lookup failure
+            // so a removed entity kept its id claimed and every revival was refused,repair loop never converged
             case "knownUuids":          return new String[]{"f_157491_"};
             // EntitySection / ClassInstanceMultiMap
             case "storage":             return new String[]{"f_156827_", "f_156828_", "f_156829_"};
@@ -80,12 +58,7 @@ public final class ReflectionAccess {
         }
     }
 
-    /**
-     * ORIGINAL implementation -- untouched.
-     *
-     * <p>Finds {@code obj}'s field by mapped name, falling back to the SRG name and then to the
-     * superclass chain, and returns its value.
-     */
+    // parameter order is srg first,then mapped - both are kept for the existing callers
     public static Object getField(Object obj, String srgName, String mappedName) throws Exception {
         Class<?> clazz = obj.getClass();
         while (clazz != null) {
@@ -106,10 +79,7 @@ public final class ReflectionAccess {
         throw new NoSuchFieldException(mappedName);
     }
 
-    /**
-     * Mapping-generation tolerant variant of {@link #getField}. Mapped name first (identical to the
-     * original behaviour), then every SRG alias, then the superclass chain.
-     */
+    // mapped name first then every alias,then the superclass chain
     public static Object getFieldRelaxed(Object obj, String mappedName) throws Exception {
         String[] aliases = srgCandidates(mappedName);
         Class<?> clazz = obj.getClass();
@@ -140,7 +110,6 @@ public final class ReflectionAccess {
         return null;
     }
 
-    /** Reflectively invokes a no-argument method by name. */
     public static Object call(Object target, String methodName, Class<?>[] paramTypes, Object... args) throws Exception {
         Method m = target.getClass().getMethod(methodName, paramTypes);
         m.setAccessible(true);

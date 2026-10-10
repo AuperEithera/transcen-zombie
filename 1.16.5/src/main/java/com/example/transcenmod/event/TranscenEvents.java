@@ -43,63 +43,37 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * The annihilation loop.
- *
- * <p>Per-target timeline, which the spec separates into two distinct stages:
- *
- * <pre>
- *   tick 0        server storage removal; client told to render it red
- *   ticks 1..10   two blood-red bolts per tick, then strikes stop
- *   tick 40       client storage removal + vanilla white death puff
- * </pre>
- *
- * <p>Three hard rules keep the mod from wrecking the game:
- *
- * <ol>
- *   <li><b>Dormant without a zombie.</b> Nothing at all happens until a Transcendence ZombieEntity exists
- *       in the level.</li>
- *   <li><b>At most one sweep per server tick.</b> {@code executeCoreLogic} is reachable from every
- *       living entity's tick and walks the whole entity list; without a latch a normal world turns
- *       that into tens of thousands of traversals per tick and ends in an
- *       {@code OutOfMemoryError}.</li>
- *   <li><b>Players are never torn out of the entity storages.</b> Doing that to a player corrupts
- *       {@code EntityTickList#active}, which {@code DistanceManager} shares: the next movement packet
- *       then throws inside vanilla and the world becomes unplayable.</li>
- * </ol>
- */
+// per-target timeline: tick 0 server storage removal, client told to render it red
+// ticks 1-10 two blood-red bolts a tick then tick 40 client removal + the vanilla white death puff
+// dormant until a TranscenZombie exists in the level
+// one sweep per server tick,executeCoreLogic is reachable from every living tick and walks the whole entity list
+// without the latch that is tens of thousands of traversals a tick and an OutOfMemoryError
+// players are never torn out of the entity storages - corrupts EntityTickList#active which DistanceManager shares
+// the next movement packet then throws inside vanilla and the world is unplayable
 public class TranscenEvents {
 
-    /** Ticks of lightning before the strikes stop. */
     private static final int STRIKE_TICKS = 10;
-    /** Bolts per tick during the strike. */
     private static final int BOLTS_PER_TICK = 2;
-    /** Full delay between the server removal and the client removal: two seconds. */
     private static final int CLIENT_REMOVE_DELAY_TICKS = 40;
 
-    /** Latches so a single server tick performs at most one sweep. */
+    // latch so one server tick does at most one sweep
     private static boolean sweeping;
     private static long lastSweptTick = Long.MIN_VALUE;
 
-    /** Last HUD state pushed to clients, so the sync packet is only sent on change. */
+    // last pushed hud state, the packet only goes out on change
     private static Boolean lastHudActive;
     private static float lastHudProgress = -1.0F;
 
-    // ------------------------------------------------------------------
-    // Living entities -- the frozen-everything behaviour
-    // ------------------------------------------------------------------
+    // living entities, the frozen-everything behaviour
 
     @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
     public static void onEntityTickHighest(LivingEvent.LivingUpdateEvent event) {
-        // Legal: LivingUpdateEvent carries @Cancelable and ForgeHooks.onLivingTick hands the flag back
-        // to LivingEntity#tick, which checks it.
+        // legal: LivingUpdateEvent carries @Cancelable and ForgeHooks.onLivingTick returns the flag to LivingEntity#tick
         event.setCanceled(true);
 
         Entity entity = event.getEntity();
 
-        // A doomed shell is a client-side leftover the server has already discarded. It gets no tick
-        // at all, so the two-second window shows a frozen red model instead of a mob that keeps
-        // walking, falling over, or animating.
+        // doomed shell: client leftover, no tick at all so the red model stays frozen for the 2s window
         if (entity.getEntityWorld().isRemote
                 && com.example.transcenmod.client.DoomedShell.isDoomed(entity.getUniqueID())) {
             return;
@@ -113,19 +87,10 @@ public class TranscenEvents {
         event.setCanceled(false);
     }
 
-    // ------------------------------------------------------------------
-    // World / player ticks -- NOT cancelable in Forge 1.20.1
-    // ------------------------------------------------------------------
+    // world and player ticks,not cancelable in forge 1.20.1
 
-    /**
-     * Observed but never cancelled: {@code TickEvent.WorldTickEvent} carries no {@code @Cancelable}
-     * and {@code ForgeEventFactory#onPreLevelTick} returns {@code void}, so the flag would be
-     * discarded even if it could be set. See the README.
-     *
-     * <p>Also one of the revival check points. Running the repair at both ends of the level tick means
-     * an entity removed early in the tick is already back before that tick finishes, instead of
-     * waiting for the next one -- which is what keeps a removal from showing up as a visible gap.
-     */
+    // never cancelled - WorldTickEvent carries no @Cancelable and ForgeEventFactory#onPreLevelTick returns void
+    // revive at both ends of the level tick so an entity removed early in the tick is back before it finishes
     @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
     public static void onLevelTickHighest(TickEvent.WorldTickEvent event) {
         if (event.phase != TickEvent.Phase.START) {
@@ -136,7 +101,6 @@ public class TranscenEvents {
         }
     }
 
-    /** Second revival pass, at the far end of the level tick. */
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void onLevelTickLowest(TickEvent.WorldTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
@@ -148,26 +112,12 @@ public class TranscenEvents {
         }
     }
 
-    /** Ticks after midnight. {@code 18000} is dusk in 1.19.2, so this is deep night. */
+    // 18000 is dusk in 1.19.2 so this is deep night
     private static final long LOCKED_TIME = 18000L;
 
-    /**
-     * Holds the world at midnight in a thunderstorm for as long as a zombie is present.
-     *
-     * <p>Both halves are re-applied every tick rather than set once. Time advances by itself and rain
-     * stops when the timer runs out, so anything set once decays; re-asserting it is what makes the
-     * condition hold instead of merely starting. Setting the time every tick also pins it, because the
-     * value written is the same one the world would have advanced to next tick.
-     *
-     * <p>{@code setWeatherParameters(0, duration, true, true)} is used in preference to
-     * {@code setRaining}/{@code setThunder}: the first two arguments are the clear and rain timers, and
-     * passing {@code 0} for the clear timer means the weather turns the moment this runs rather than
-     * after a random delay. {@code true, true} is rain plus thunder, i.e. an actual thunderstorm.
-     *
-     * <p>This is gated on a zombie actually being in the level, not on the HUD latch. The latch is
-     * sticky by design, so keying weather off it would leave the world permanently dark after the first
-     * egg use, with nothing on screen to explain why.
-     */
+    // re-applied every tick not set once - time advances by itself and rain stops when the timer runs out
+    // setWeather(0, 6000, true, true) - the 0 clear timer turns it at once rather than after a random delay
+    // gated on a zombie in the level, not the hud latch, the latch is sticky and would leave the sky dark for good
     private static void forceNightAndStorm(ServerWorld level) {
         boolean present = false;
         for (Entity entity : snapshot(level)) {
@@ -176,8 +126,7 @@ public class TranscenEvents {
                 break;
             }
         }
-        // A zombie that has been torn out is still on the watch list and is coming back this tick, so
-        // treat that as present too; otherwise the sky flickers off for one tick per removal.
+        // torn-out zombie is still on the watch list,count it present or the sky flickers off for a tick per removal
         if (!present && !TranscenMod.ZOMBIE_POSITIONS.isEmpty()) {
             present = true;
         }
@@ -192,7 +141,7 @@ public class TranscenEvents {
         }
     }
 
-    /** {@code TickEvent.PlayerTickEvent} is not cancelable either; see above. */
+    // PlayerTickEvent is not cancelable either
     @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
     public static void onPlayerTickHighest(TickEvent.PlayerTickEvent event) {
         executeCoreLogic(event.player);
@@ -200,35 +149,13 @@ public class TranscenEvents {
     }
 
 
-    /**
-     * Wipes every Transcendence ZombieEntity out of the level and ends the encounter.
-     *
-     * <p>Used by the spawn egg, which both summons and dismisses: using it clears whatever is already
-     * there and then spawns a fresh one through the ordinary path.
-     *
-     * <p><b>Order matters, and getting it wrong makes the wipe undo itself.</b> The watch list is what
-     * drives the repair, so it has to be emptied <i>before</i> the entities are removed. The other way
-     * round, every removal is seen by the sweep as a zombie that vanished, and the repair puts one back
-     * for each -- the wipe would look like it did nothing, over and over.
-     *
-     * <p>The entities are detached with the same surgery used on foreign ones, so the client is not told
-     * to drop its copies immediately; the usual shell handles that. The HUD is switched off here rather
-     * than left to the client's own detection, because the point of the action is that the encounter ends
-     * visibly at once, music included.
-     */
-    /**
-     * Left-click with the egg: toggle this mod's protection systems, and say so in chat.
-     *
-     * <p>A toggle rather than a one-way action, because "stop keeping the zombie here" and "start again"
-     * are the same decision made twice, and a message on each flip means the state is never a guess.
-     */
+    // wipes every TranscenZombie out of the level and ends the encounter, the egg both summons and dismisses
+    // watch list is emptied before the removals - the other order makes the repair put one back per removal
+    // hud is switched off here, not left to the client, so the encounter ends visibly at once, music included
+    // left-click with the egg toggles the protection, a chat message on each flip so the state is never a guess
     public static void toggleDefence(ServerPlayerEntity player, ServerWorld level) {
-        // The cooldown is checked here, around the whole toggle, and not inside the wipe.
-        //
-        // Split across two methods it did the wrong thing: one left-click raises several events, so the
-        // first event flipped the flag and then the wipe it asked for was suppressed by the cooldown, and
-        // the second event flipped the flag back. The click looked like it had done nothing and had to be
-        // repeated. Guarding the pair together makes one click one action, whatever the event count.
+        // cooldown wraps the whole toggle not just the wipe
+        // split apart,one click flipped the flag then had its wipe suppressed and a second event flipped it back
         long now = level.getGameTime();
         if (lastWipeTick != Long.MIN_VALUE && now - lastWipeTick < WIPE_COOLDOWN_TICKS) {
             return;
@@ -237,9 +164,7 @@ public class TranscenEvents {
 
         boolean on = !TranscenMod.defenceEnabled;
 
-        // Defence first, then the clear. The clear inspects the world, and a moment spent deciding
-        // whether to rebuild comes before that -- so switching the protection off first means nothing can
-        // be restored in the gap between the two steps.
+        // protection off before the clear - the clear inspects the world and a restore in the gap would undo it
         TranscenMod.defenceEnabled = on;
         if (!on) {
             clearAllZombies(level);
@@ -251,22 +176,13 @@ public class TranscenEvents {
     }
 
     public static void clearAllZombies(ServerWorld level) {
-        // Not rate limited here -- the cooldown belongs to the toggle, which guards its flag flip and this
-        // call together. Guarding them separately let one of the pair happen without the other, which is
-        // what made a single click appear to do nothing.
-        //
-        // Switching the protection off first is also the caller's job, and it matters for the same reason:
-        // this method inspects the world, and the repair must already be down before it does.
+        // no cooldown here,it belongs to the toggle which guards the flag flip and this call together
+        // switching the protection off first is the caller's job too - this method inspects the world
         TranscenMod.defenceEnabled = false;
 
-        // Deep removal, at the storage level.
-        //
-        // Every route that goes through the entity is refused by the entity, so the entity is bypassed
-        // uuid indexes and from the tick list by hand. Nothing in the entity is consulted, so nothing in
-        // the entity can refuse, and its own defences are left exactly as they are.
-        //
-        // Repeated passes, because a removal that lands mid-iteration can leave behind an entity the
-        // current pass has already walked past.
+        // deep removal at the storage level, every route through the entity gets refused by the entity
+        // so the uuid index and the tick list are walked by hand and the entity is never consulted
+        // repeated passes, a removal mid-iteration can leave behind an entity this pass already walked past
         int deep = 0;
         for (int pass = 0; pass < 8; pass++) {
             List<Entity> batch = new ArrayList<>();
@@ -289,7 +205,7 @@ public class TranscenEvents {
         }
         TranscenZombie.beginWipe();
 
-        // Every container that holds zombie state is emptied, not just the watch list.
+        // every container holding zombie state, not just the watch list
         TranscenMod.ZOMBIE_POSITIONS.clear();
         TranscenMod.ZOMBIE_YAW.clear();
         TranscenMod.ZOMBIE_PITCH.clear();
@@ -297,14 +213,12 @@ public class TranscenEvents {
         TranscenMod.ANNIHILATION_DOOMED_ON.clear();
         TranscenMod.ANNIHILATION_POSITIONS.clear();
 
-        // Cached comparisons, reset so the next tick re-evaluates from scratch instead of deciding
-        // nothing has changed and skipping the update.
+        // cached comparisons reset so the next tick re-evaluates,otherwise it decides nothing changed and skips
         lastSweptTick = Long.MIN_VALUE;
         lastHudActive = null;
         lastHudProgress = -1.0F;
 
-        // Tell clients to drop their shells and stop the bar and the music. All three live on the client,
-        // so none of them stop without being told.
+        // shells, bar and music all live on the client so none of them stop without being told
         TranscenMod.HUD_ACTIVE = false;
         TranscenMod.NETWORK.send(
                 PacketDistributor.DIMENSION.with(level::getDimensionKey),
@@ -316,57 +230,29 @@ public class TranscenEvents {
         TranscenMod.LOGGER.info("[transcenmod] wipe: {} zombie(s) removed", deep);
     }
 
-    /** Health the egg holder is pinned to, every tick. */
     private static final float EGG_HOLDER_HEALTH = 20.0F;
 
-    /**
-     * Minimum ticks between two wipes.
-     *
-     * <p>Not to slow the player down: one left-click raises three separate events -- left-click on air,
-     * left-click on a block, attack-entity -- and depending on what is under the crosshair more than one
-     * of them fires. A few ticks of separation collapses those into the single action the player
-     * performed, while still allowing two deliberate clicks in quick succession.
-     */
+    // one left-click raises three events (air, block, attack-entity) and more than one can fire
+    // a few ticks of separation collapses them into the single action the player performed
     private static final long WIPE_COOLDOWN_TICKS = 5L;
 
-    /** Game time of the last wipe that ran. */
     private static long lastWipeTick = Long.MIN_VALUE;
 
-    /**
-     * True once a wipe has dismissed the encounter, until a zombie enters the world again.
-     *
-     * <p>While it is set the repair does nothing at all. Emptying the watch list is not sufficient by
-     * itself: entries re-enter it a tick later and the encounter rebuilds, which is the flicker --
-     * dismissed, restored, dismissed. Rather than keep hunting the individual writers, the wipe states
-     * that the encounter is over and the repair respects that.
-     *
-     * <p><b>What lifts it.</b> Any zombie entering the level, by any route. That deliberately covers both
-     * the spawn egg and a zombie summoned by a command: both make a zombie join, and both mean the
-     * encounter should be running again. It is the reset point an earlier attempt at this flag lacked --
-     * that version could never be cleared, so every zombie created afterwards also dismissed itself and
-     * the level filled with entities. Here the state ends as soon as anything is summoned.
-     */
+    // set by a wipe, cleared by any zombie entering the level
+    // while set the repair does nothing - emptying the watch list alone is not enough, entries come back a tick later
+    // an earlier version could never clear it, so every zombie created afterwards dismissed itself and the level filled up
     private static volatile boolean encounterEnded;
 
-    /** Ends the encounter; called by the wipe. */
     public static void endEncounter() {
         encounterEnded = true;
     }
 
-    /** Restarts the encounter; called whenever a zombie joins the level, and by the egg. */
     public static void restartEncounter() {
         encounterEnded = false;
     }
 
-    /**
-     * True when a recorded position is somewhere the game will not actually track the entity.
-     *
-     * <p>Two ways that happens, and both were observed. The literal origin is what an entity has before
-     * anything places it, so a record that still reads (0,0,0) means the placement never took -- and the
-     * origin is frequently outside the loaded region. Anywhere else is judged by whether its chunk is
-     * loaded, because an entity in an unloaded chunk is accepted by the manager and then never reported,
-     * which is indistinguishable from having been removed.
-     */
+    // (0,0,0) means the placement never took and the origin is usually outside the loaded region
+    // elsewhere the chunk is the test,an entity in an unloaded chunk is accepted then never reported
     private static boolean isUnusablePosition(ServerWorld level, Vector3d pos) {
         if (pos == null) {
             return true;
@@ -384,18 +270,12 @@ public class TranscenEvents {
         }
     }
 
-    /**
-     * A loaded spot beside a player, or {@code null} when there is nobody to stand near.
-     *
-     * <p>Taken from the player list rather than the entity list so it is a real, logged-in player, and
-     * offset a little so the zombie does not spawn inside them.
-     */
+    // real logged-in player from the player list,offset 2 blocks so the zombie does not spawn inside them
     private static Vector3d positionNearPlayer(ServerWorld level, Vector3d fallback) {
         for (net.minecraft.entity.player.ServerPlayerEntity player : level.getPlayers()) {
             return new Vector3d(player.getPosX() + 2.0D, player.getPosY(), player.getPosZ() + 2.0D);
         }
-        // No players, so no loaded ground that is certainly with them. The fallback is the world spawn,
-        // which is loaded whenever the level is.
+        // no players, so no loaded ground that is certainly with them, fall back to the world spawn which is loaded whenever the level is
         if (fallback != null && level.isBlockLoaded(level.getSpawnPoint())) {
             net.minecraft.util.math.BlockPos spawn = level.getSpawnPoint();
             return new Vector3d(spawn.getX() + 0.5D, spawn.getY(), spawn.getZ() + 0.5D);
@@ -403,30 +283,11 @@ public class TranscenEvents {
         return null;
     }
 
-    /**
-     * While the player is holding this mod's spawn egg, their health is pinned and death is refused.
-     *
-     * <p>Pinning health alone would not be enough. Damage is applied and death is decided inside a
-     * single call, so a tick-end reset can arrive after the death has already been registered and the
-     * death screen already requested. The three hooks below therefore sit at different points of that
-     * sequence:
-     *
-     * <ul>
-     *   <li>{@link #onLivingDamageLowest} runs before the damage is applied at all. Restoring health
-     *       here -- rather than after the fact -- is what stops the killing blow from ever landing, so
-     *       nothing downstream sees a death to react to.</li>
-     *   <li>{@link #onLivingDeathLowest} cancels the death outright if something bypasses damage
-     *       entirely, such as the void or {@code /kill}.</li>
-     *   <li>{@link #keepEggHolderAlive} is the steady state: one restore per tick, so a player who
-     *       joins already hurt, or whose health is moved by a mod that does not go through damage at
-     *       all, is pulled back to full.</li>
-     * </ul>
-     *
-     * <p>The death screen is the client's reaction to a death packet, so a death that never happens
-     * cannot open one. That is deliberate: suppressing the screen on the client while the server still
-     * considered the player dead would leave the two sides disagreeing, and the screen would simply
-     * return on the next sync.
-     */
+    // health pinned and death refused while the egg is in the inventory
+    // pinning alone is not enough - damage is applied and death decided in one call, a tick-end reset lands after
+    // the damage hook is lowest priority so it runs before the damage is written and the killing blow never lands
+    // the death hook cancels outright for paths that bypass damage, the void and /kill
+    // the per-tick pin covers a player who joins already hurt, the client never gets a death packet so no screen
     private static void keepEggHolderAlive(PlayerEntity player) {
         if (player.getEntityWorld().isRemote || player.isCreative() || player.isSpectator()) {
             return;
@@ -438,27 +299,15 @@ public class TranscenEvents {
             player.setHealth(EGG_HOLDER_HEALTH);
         }
         player.setAir(player.getMaxAir());
-        // Fire and the void both keep damaging a player who cannot be killed; putting them out here
-        // stops the screen being permanently on fire for an invulnerable player.
+        // fire keeps damaging a player who cannot die,putting it out stops the screen burning forever
         if (player.isBurning()) {
             player.extinguish();
         }
     }
 
-    /**
-     * True when the egg is anywhere in the player's inventory.
-     *
-     * <p>Checked against the whole inventory rather than the selected slot or the hands. The intent is
-     * "this player owns the encounter", not "this player is brandishing it", and requiring it to be held
-     * meant the protection switched off the moment the player scrolled away, swapped to a weapon to
-     * fight back, or had the stack moved by anything else.
-     *
-     * <p>Cached for one tick. This is asked from several places per tick -- the mixin on every
-     * {@code getHealth} call, the client pin, the damage and death guards -- and sweeping up to 36
-     * stacks each time would turn a cheap question into a hot path. The cache key is the server tick, so
-     * it cannot serve a stale answer across ticks: picking the egg up takes effect on the next tick at
-     * the latest.
-     */
+    // whole inventory, not the selected slot - the meaning is ownership, not brandishing it, so the protection does not lapse on a scroll
+    // cached for one tick,it is asked several times per tick and sweeping 36 stacks is too much for a hot path
+    // keyed on the server tick so it cannot answer stale across ticks
     public static boolean isCarryingEgg(PlayerEntity player) {
         long tick = player.getEntityWorld().getGameTime();
         if (player.getUniqueID().equals(eggCachePlayer) && tick == eggCacheTick) {
@@ -481,43 +330,22 @@ public class TranscenEvents {
     private static long eggCacheTick = Long.MIN_VALUE;
     private static boolean eggCacheValue;
 
-    /**
-     * Whether the egg is actually in one of the player's hands.
-     *
-     * <p>A different question from {@link #isCarryingEgg}, and the distinction is the whole point. Carrying
-     * is about ownership -- one restore per tick, any slot -- because the protection should not lapse the
-     * moment the player scrolls away. Holding is about intent: the left-click toggle is a deliberate
-     * gesture, and answering it from the inventory meant that having the egg anywhere in the pack made
-     * every left-click with any item at all switch the protection off and on.
-     *
-     * <p>No cache. The inventory sweep is what needed one; two hand slots are a pair of constant-time
-     * lookups, and caching them would add a way to be wrong without buying anything.
-     */
+    // the toggle asks holding,not carrying - answering from the inventory made every left-click with any item flip it
+    // no cache, two hand slots are constant-time lookups
     public static boolean isHoldingEgg(PlayerEntity player) {
         return player.getHeldItemMainhand().getItem() == TranscenMod.TRANSCEN_SPAWN_EGG.get()
                 || player.getHeldItemOffhand().getItem() == TranscenMod.TRANSCEN_SPAWN_EGG.get();
     }
 
-    /** The health an egg holder is pinned to. Shared with the client guard. */
+    // shared with the client guard so both sides pin the same value
     public static float eggHolderHealth() {
         return EGG_HOLDER_HEALTH;
     }
 
-    /**
-     * Refuses damage to the egg holder, before it is applied.
-     *
-     * <p>Cancelling is what makes this the earliest possible point. Damage is applied immediately after
-     * this event returns, so a cancelled event means the damage is never written at all -- there is no
-     * window in which the entity is briefly dead, and nothing downstream ever sees a death to react to.
-     * Restoring health in a later hook cannot achieve that: by then the value has already been written
-     * and any observer of "health reached zero" has already run.
-     *
-     * <p>This is the hook that covers the red lightning. That code does
-     * {@code victim.attackEntityFrom(source, 1919810)} and then {@code victim.setHealth(0)}, and the two calls are
-     * adjacent in the same method -- there is nowhere between them to insert anything. Cancelling here
-     * does not stop the {@code setHealth(0)} that follows, which is why the tick-level pin and the
-     * screen guard exist as well; each covers a different part of the sequence.
-     */
+    // cancel is the earliest possible point - damage is written immediately after this event returns
+    // restoring health in a later hook is too late, anything watching for health zero has already run
+    // this one covers the red lightning,1919810 damage then setHealth(0) with no gap between the two calls
+    // it still cannot stop that setHealth(0), which is why the tick pin and the screen guard exist as well
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void onLivingHurtLowest(LivingHurtEvent event) {
         if (!(event.getEntity() instanceof PlayerEntity)) {
@@ -534,12 +362,7 @@ public class TranscenEvents {
         player.setHealth(EGG_HOLDER_HEALTH);
     }
 
-    /**
-     * Refuses damage to the egg holder, before it is applied.
-     *
-     * <p>Restoring health instead of cancelling keeps this out of the "invulnerable" flag, which other
-     * mods and the damage pipeline itself read for their own decisions.
-     */
+    // restore rather than cancel,being marked invulnerable is read by other mods and by the pipeline itself
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void onLivingDamageLowest(LivingDamageEvent event) {
         if (!(event.getEntity() instanceof PlayerEntity)) {
@@ -552,7 +375,7 @@ public class TranscenEvents {
         player.setHealth(EGG_HOLDER_HEALTH);
     }
 
-    /** Refuses death outright, for the paths that never go through damage. */
+    // for the paths that never go through damage, void and /kill
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void onLivingDeathLowest(LivingDeathEvent event) {
         if (!(event.getEntity() instanceof PlayerEntity)) {
@@ -566,25 +389,19 @@ public class TranscenEvents {
         event.setCanceled(true);
     }
 
-    // ------------------------------------------------------------------
-    // Banned classes may not re-enter the world
-    // ------------------------------------------------------------------
+    // banned classes may not re-enter the world
 
     @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
     public static void onEntityJoinHighest(EntityJoinWorldEvent event) {
         Entity joining = event.getEntity();
 
-        // The encounter restarts on either priority, not just the low one.
-        //
-        // Another mod's handler sits between the two, and a zombie whose join it cancels still reached
-        // this point. Waiting for the low-priority handler would then miss the summon entirely and leave
-        // the encounter switched off with a zombie standing in the world. Clearing it here costs nothing
-        // and cannot fire spuriously, because this only runs for this mod's own entity.
+        // restarts here as well as at low priority,another mod's handler sits between the two
+        // a join it cancels still reaches this point, waiting would miss the summon and leave the encounter off
         if (joining instanceof TranscenZombie) {
             restartEncounter();
         }
 
-        // Players must never be blocked from joining, whatever else happens.
+        // players are never blocked from joining whatever else happens
         if (joining instanceof PlayerEntity) {
             return;
         }
@@ -601,15 +418,9 @@ public class TranscenEvents {
         TranscenZombie zombie = (TranscenZombie) event.getEntity();
         event.setCanceled(false);
 
-        // Record the watch-list entry the moment a zombie enters the level, whichever route put it
-        // there. The spawn egg creates its zombie through vanilla's own spawn-egg path, so without
-        // this the list would stay empty and the repair would have nothing to restore -- which is what
-        // let another mod's removal end the encounter instead of being repaired.
-        // Refuses to record a retired zombie, for the same reason recordPosition does: otherwise a
-        // zombie that a wipe has just dismissed is entered straight back into the list and the repair
-        // resurrects it. This is the second of the two places that refill the watch list.
-        // A zombie entering the level restarts the encounter, whether it came from the egg or from a
-        // command. That is what makes the wipe a thing you can undo by summoning again.
+        // record the watch-list entry on join,whichever route put it there - the egg uses vanilla's path and would never be recorded
+        // a retired zombie is left out, otherwise a wipe is entered straight back and the repair resurrects it
+        // zombie entering restarts the encounter whether it came from the egg or a command
         restartEncounter();
         if (!event.getWorld().isRemote() && !zombie.isRetired()) {
             TranscenMod.ZOMBIE_POSITIONS.put(zombie.getUniqueID(),
@@ -617,9 +428,7 @@ public class TranscenEvents {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Core loop
-    // ------------------------------------------------------------------
+    // core loop
 
     public static void executeCoreLogic(Entity trigger) {
         if (!(trigger.getEntityWorld() instanceof ServerWorld)) {
@@ -629,13 +438,12 @@ public class TranscenEvents {
         if (level.isRemote) {
             return;
         }
-        // Protection off: the sweep does not run at all. Without this guard the sweep kept running while
-        // the protection was off, which is how "off" could still produce a revival and still leave a
-        // zombie on screen -- the switch was cutting one path into the repair and missing the other.
+        // protection off means no sweep at all - the switch was cutting one path into the repair and missing the other
+        // without this guard "off" could still revive a zombie and still leave one on screen
         if (!TranscenMod.defenceEnabled) {
             return;
         }
-        // Rule 2: one sweep per tick, no matter how many entities fire this.
+        // one sweep per tick however many entities fire this
         long tick = level.getGameTime();
         if (sweeping || tick == lastSweptTick) {
             return;
@@ -650,36 +458,27 @@ public class TranscenEvents {
     }
 
     private static void sweep(ServerWorld level) {
-        // Fresh spawn budget for this tick, so a burst of removals cannot cascade into a flood.
+        // fresh spawn budget each tick so a burst of removals cannot cascade
         beginTickSpawnBudget();
 
         List<Entity> snapshot = snapshot(level);
 
-        // The HUD is armed, not inferred. Once the encounter has started it stays on for the rest of
-        // the session, and specifically does not follow whether a zombie happens to be in the level
-        // this tick.
-        //
-        // That distinction is the whole difference between a steady bar and a strobing one. The
-        // previous test was "is there a zombie, or an entry on the watch list", which reads as a live
-        // signal -- so every time another mod removed the zombie, the bar was reported off and then on
-        // again as the repair put it back. The bar is not a health readout of a specific entity; it is
-        // the encounter's frame, and it should not be tied to that entity's presence.
+        // the hud is armed not inferred, once the encounter starts it stays on for the rest of the session
+        // tying it to a zombie being present made the bar strobe off and on every time another mod removed the zombie
+        // the bar is the encounter's frame,not a health readout of one entity
         boolean zombieOwned = TranscenMod.HUD_ACTIVE
                 || !TranscenMod.ZOMBIE_POSITIONS.isEmpty()
                 || firstZombie(snapshot) != null;
 
-        // The HUD is server-driven so it is right even when the client cannot see the zombie.
+        // server-driven so it is right even when the client cannot see the zombie
         pushHud(level, zombieOwned);
 
-        // Revival runs before the "is a zombie present" test, and deliberately so. Gating it behind
-        // that test made revival impossible in the only case that matters: once the last zombie was
-        // force-removed, firstZombie returned null and this method returned early, so the watch list
-        // was never consulted and the zombie never came back. Where the level has no zombie is
-        // exactly where a rebuild is needed.
+        // revival runs before the zombie-present test on purpose
+        // gating it behind that test is exactly the case that matters,last zombie gone means firstZombie returns null and the rebuild is skipped
         restoreMissingZombies(level, snapshot);
 
         if (!zombieOwned) {
-            // Rule 1: inert with no zombie. Outstanding timelines still get to finish.
+            // inert with no zombie, outstanding timelines still get to finish
             advanceRemovalTimers(level);
             return;
         }
@@ -688,10 +487,7 @@ public class TranscenEvents {
         advanceRemovalTimers(level);
     }
 
-    /**
-     * One copy of the level's entities up front: {@code getAllEntities()} legitimately yields
-     * {@code null} entries, and the sweep mutates the storages while iterating them.
-     */
+    // getAllEntities() legitimately yields null entries and the sweep mutates the storages while iterating
     private static List<Entity> snapshot(ServerWorld level) {
         List<Entity> out = new ArrayList<>();
         for (Entity entity : level.getEntitiesIteratable()) {
@@ -711,7 +507,6 @@ public class TranscenEvents {
         return null;
     }
 
-    /** Sends the bar's state only when it actually changed. */
     private static void pushHud(ServerWorld level, boolean zombieOwned) {
         boolean active = zombieOwned;
         float progress = 1.0F;
@@ -726,33 +521,16 @@ public class TranscenEvents {
                 new HudSyncPacket(active, progress));
     }
 
-    /** One-shot so a repeating failure cannot flood a log that is already fragile. */
+    // one-shot, a repeating failure would flood a log that is already fragile
     private static boolean reviveFailureLogged;
 
-    /**
-     * UUIDs with a respawn already queued but not yet executed.
-     *
-     * <p>This is the thing that makes several revival check points safe. There are now four of them --
-     * the per-tick sweep, both ends of the level tick, and entity join -- and they all run on the
-     * server thread, so they cannot literally interleave. What they can do is each observe the same
-     * zombie as missing within one tick and each queue a spawn for it, because the level's entity list
-     * is not updated until the tick ends. Without a mark, that is four zombies where there should be
-     * one.
-     *
-     * <p>The mark is added before the spawn is queued and removed in a {@code finally} when it runs, so
-     * a failure cannot leave an entry stranded and block future repairs.
-     */
+    // uuids with a respawn queued but not yet run,keeps the four revive points from each queueing one
+    // they all run on the server thread but the level's entity list is not updated until the tick ends
+    // the mark goes in before the spawn is queued and comes out in a finally, so a failure cannot strand it
     private static final Set<UUID> SPAWN_PENDING = new HashSet<>();
 
-    /**
-     * Guarded entry point for the revival check points outside the per-tick sweep.
-     *
-     * <p>Everything here is best-effort, and it must never throw out of an event handler. If it does,
-     * Forge's {@code EventBus} tries to report the exception, and a log4j conflict in a modpack turns
-     * that report into a fatal {@code LinkageError} that hides the real cause. Containing the failure
-     * here keeps the original exception from ever reaching the bus, and the message is written with
-     * {@code printStackTrace} rather than the logger for the same reason.
-     */
+    // must never throw out of an event handler - forge's EventBus reports it and a log4j conflict turns that report into a fatal LinkageError
+    // printStackTrace rather than the logger, for the same reason
     private static void guardedRevive(ServerWorld level) {
         try {
             reviveNow(level);
@@ -764,59 +542,30 @@ public class TranscenEvents {
         }
     }
 
-    /** The repair against a fresh snapshot of the level. */
     private static void reviveNow(ServerWorld level) {
         restoreMissingZombies(level, snapshot(level));
     }
 
-    /**
-     * Puts a zombie back whenever one has vanished but its identity is still on the watch list.
-     *
-     * <p><b>Keyed by UUID, and the respawn reuses that UUID.</b> The two halves only work together,
-     * and both are needed:
-     *
-     * <ul>
-     *   <li>Comparing by UUID is what tells you <em>which</em> zombie is missing. A head count cannot:
-     *       a list holding three entries and a level holding three zombies with different identities
-     *       looks complete, so a genuinely missing one is never repaired.</li>
-     *   <li>Reusing the entry's UUID on respawn is what makes the repair converge. An earlier revision
-     *       compared by UUID but spawned a fresh identity, so the entry it was meant to satisfy stayed
-     *       missing forever and every sweep added another zombie -- the world filled up with copies.
-     *       Handing the new entity the same UUID means the very next sweep sees it as present.</li>
-     * </ul>
-     *
-     * <p>A live zombie is also (re-)recorded here. That matters because the watch list is otherwise
-     * only written when a zombie <em>spawns through this mod's own code</em>; a zombie produced by the
-     * spawn egg is created by vanilla's spawn-egg path and would never be recorded, leaving the list
-     * empty and the repair with nothing to work from.
-     */
-    /**
-     * Ceiling on how many zombies this mod will create in a single tick.
-     *
-     * <p>A runaway here is not a cosmetic bug: 1794 zombies were once created in one tick, all at the
-     * origin, which floods the entity list and takes the server down with it. The throttle makes an
-     * unforeseen interaction degrade into "repairs a few per tick" rather than "destroys the world".
-     */
+    // keyed by uuid and the respawn reuses it - both halves are needed
+    // a head count cannot tell which zombie is missing and a fresh identity never satisfies the entry
+    // an earlier revision did exactly that, every sweep added another copy
+    // a live zombie is re-recorded here since the list is otherwise only written on this mod's own spawn path
+    // 1794 zombies were once created in one tick, all at the origin, and it took the server down
+    // the throttle makes a runaway degrade into a few repairs per tick
     private static final int MAX_SPAWNS_PER_TICK = 4;
 
-    /** Hard ceiling on how many zombies the mod will keep alive, as a last-resort circuit breaker. */
+    // last-resort circuit breaker on how many the mod keeps alive
     private static final int MAX_ZOMBIES = 1;
 
-    /** Spawns already performed in the current server tick; reset at the start of each sweep. */
     private static int spawnsThisTick;
 
-    /** Resets the per-tick spawn budget. Called once per tick from the sweep. */
     private static void beginTickSpawnBudget() {
         spawnsThisTick = 0;
     }
 
-    /** Runs the repair for one level. */
     private static void restoreMissingZombies(ServerWorld level, List<Entity> snapshot) {
-        // Protection off: nothing is put back. This gate is what makes a wipe stick, and it reaches this
-        // mod's systems only -- the zombie's own defences are untouched.
-        //
-        // The encounterEnded check below is left in place as well; the two are not redundant, one is
-        // switched by the player and the other by a wipe, and either alone is enough to hold the repair.
+        // protection off means nothing is put back - this gate is what makes a wipe stick
+        // encounterEnded is checked as well, one is switched by the player and the other by a wipe, both hold the repair
         if (!TranscenMod.defenceEnabled) {
             return;
         }
@@ -827,8 +576,7 @@ public class TranscenEvents {
         for (Entity entity : snapshot) {
             if (entity instanceof TranscenZombie) { TranscenZombie zombie = (TranscenZombie) entity;
                 present.add(zombie.getUniqueID());
-                // Keep the recorded spot and facing fresh, so a respawn lands where the zombie last was
-                // and looks the way it did.
+                // keep the recorded spot and facing fresh so a respawn lands and looks where the zombie last was
                 TranscenMod.ZOMBIE_POSITIONS.put(zombie.getUniqueID(),
                         new Vector3d(zombie.getPosX(), zombie.getPosY(), zombie.getPosZ()));
                 TranscenMod.ZOMBIE_YAW.put(zombie.getUniqueID(), zombie.rotationYaw);
@@ -836,13 +584,8 @@ public class TranscenEvents {
             }
         }
 
-        // The population limit is enforced from the snapshot, not from a by-class query.
-        //
-        // The by-class query was the wrong instrument and the reason the limit never held: on this setup
-        // it reported zero even immediately after a successful add, while the level's own entity list
-        // grew by one each time. A count that always reads zero makes "we already have enough" unreachable,
-        // so every tick added another zombie -- and because the entity list is authoritative and the
-        // snapshot is built from it, counting there is both correct and free.
+        // counted from the snapshot,not a by-class query
+        // that query reported zero even right after a successful add on this setup, so the limit never held and every tick added another
         int aliveCount = 0;
         for (Entity entity : snapshot) {
             if (entity instanceof TranscenZombie) {
@@ -862,37 +605,26 @@ public class TranscenEvents {
                 continue;
             }
             if (spawnsThisTick >= MAX_SPAWNS_PER_TICK) {
-                // Budget spent; the entry stays on the list and the next tick will pick it up.
+                // budget spent, the entry stays on the list for the next tick
                 return;
             }
             Vector3d pos = entry.getValue();
             float yaw = TranscenMod.ZOMBIE_YAW.getOrDefault(id, 0.0F);
             float pitch = TranscenMod.ZOMBIE_PITCH.getOrDefault(id, 0.0F);
 
-            // Never revive into the world origin, and never into unloaded ground.
-            //
-            // This is the fix for a loop that produced thousands of zombies. The manager only reports an
-            // entity through getEntity once its chunk is loaded and it is in visible storage. A zombie
-            // placed at (0,0,0) in a world whose origin chunks are not loaded is added to the manager but
-            // never becomes findable -- so the very next sweep saw it as missing and made another, and
-            // the next sweep did the same. Thousands of them, every tick, which is also what made the
-            // client stutter.
-            //
-            // A recorded position is only honoured when it is somewhere the game will actually track;
-            // otherwise the zombie goes beside a player, which is loaded by definition and is also where
-            // the encounter is meant to be.
+            // never revive into the origin or unloaded ground - a zombie added to the manager there never becomes findable
+            // the next sweep sees it missing and makes another,thousands per tick and the client stutters
+            // an unusable position falls back to beside a player, loaded by definition
             if (isUnusablePosition(level, pos)) {
                 pos = positionNearPlayer(level, pos);
                 if (pos == null) {
-                    // Nowhere to put it and nobody to put it near. Skip this entry; the next tick tries
-                    // again rather than piling up an entity that could never be found.
+                    // nowhere to put it, skip the entry and let the next tick try rather than pile up an unfindable entity
                     continue;
                 }
                 TranscenMod.ZOMBIE_POSITIONS.put(id, pos);
             }
 
-            // The deferred task below captures this, so it has to be effectively final; the position may
-            // have been replaced above, hence the separate name.
+            // the lambda captures this so it has to be effectively final,the position above may have been replaced
             final Vector3d target = pos;
             SPAWN_PENDING.add(id);
             spawnsThisTick++;
@@ -904,7 +636,7 @@ public class TranscenEvents {
                 }
             });
         }
-        // repair is not converging and the cap is masking it rather than solving it.
+        // repair is not converging, the cap is masking it rather than solving it
         if (present.size() >= MAX_ZOMBIES) {
             TranscenMod.LOGGER.warn(
                     "[transcenmod] revival: {} zombies alive, at the {}-zombie cap -- repair is not converging",
@@ -912,41 +644,23 @@ public class TranscenEvents {
         }
     }
 
-    /** Creates a zombie with a fresh identity at {@code pos} and adds it to the level. */
     public static void spawnZombie(ServerWorld level, Vector3d pos) {
         spawnZombie(level, UUID.randomUUID(), pos, 0.0F, 0.0F);
     }
 
 
-    /**
-     * Creates a zombie carrying {@code id} at {@code pos}, facing {@code yaw}/{@code pitch}, and adds
-     * it to the level.
-     *
-     * <p>Registered on the watch list before it is added, so a removal that lands in the same tick
-     * still leaves an entry behind to be repaired.
-     *
-     * <p>The facing is restored rather than left at zero: a revived zombie that snaps to due south is
-     * visibly not the same entity, and the watch list is meant to bring the encounter back exactly as
-     * it was.
-     */
+    // on the watch list before it is added - a removal in the same tick still leaves an entry to repair
+    // facing is restored, a revived zombie that snaps to due south is visibly not the same entity
     private static void spawnZombie(ServerWorld level, UUID id, Vector3d pos, float yaw, float pitch) {
         TranscenZombie zombie = new TranscenZombie(TranscenMod.TRANSCEN_ZOMBIE.get(), level);
         zombie.setUniqueId(id);
 
-        // Placement goes through moveTo with the relocation guard lifted, rather than through a
-        // reflective write to the position field.
-        //
-        // The field write was the obvious approach -- the original draft used it -- but it relies on
-        // the field being reachable under the name "position", and on 1.19.2 it was silently not
-        // working: 1794 zombies were created, every one of them at the origin, which is exactly what a
-        // failed position write followed by a fallback that also did nothing looks like. moveTo is a
-        // declared method, so there is no name to get wrong, and the guard is already built to allow
-        // one deliberate relocation.
+        // moveTo with the relocation guard lifted,not a reflective write to the position field
+        // the field write looked obvious but silently did not work on 1.19.2, 1794 zombies all at the origin
+        // a declared method cannot be defeated by a name that resolves differently
         zombie.withRelocationAllowed(() -> zombie.setLocationAndAngles(pos.x, pos.y, pos.z, yaw, pitch));
 
-        // Facing again through the normal setters: moveTo already set yaw/pitch, but the head and body
-        // rotations are separate fields and a revived zombie that does not reset them visibly snaps
-        // round on its first frame.
+        // head and body rotation are separate fields from yaw/pitch,without them a revived zombie snaps round on its first frame
         zombie.rotationYawHead = yaw;
         zombie.renderYawOffset = yaw;
 
@@ -961,26 +675,16 @@ public class TranscenEvents {
         }
     }
 
-    /**
-     * Stage 1: the server copy is torn out at the lowest level <b>immediately</b>,  through
-     *
-     * ends in {@code ChunkMap.removeEntity -> broadcastAndSend}, which is what sends the despawn
-     * packet. That class additionally empties the entity's {@code TrackedEntity.seenBy} set, so
-     * there is no tracked recipient left for a despawn even if a later sweep looks for one. The
-     * client keeps its copy, which becomes the red render shell.
-     *
-     * <p>The entity is made invulnerable and stationary for the brief remainder of its life so the
-     * lightning cannot kill it into a death animation while the shell is on display.
-     */
+    // stage 1 - the server copy is torn out immediately, ending in ChunkMap.removeEntity -> broadcastAndSend
+    // that also empties TrackedEntity.seenBy,no recipient is left to despawn and the client keeps its red shell
+    // invulnerable and stationary, or the lightning kills it into a death animation while the shell is on display
     private static void annihilateForeignEntities(ServerWorld level, List<Entity> snapshot) {
         long now = level.getGameTime();
         for (Entity entity : snapshot) {
             if (isNeverRemovable(entity)) {
                 continue;
             }
-            // The zombie's own fireballs are spared. They are projectiles like any other and would
-            // otherwise be annihilated the instant they spawn, deleting the zombie's attack before it
-            // could travel. Everything else -- other mobs' projectiles included -- is still cleared.
+            // the zombie's own fireballs would be annihilated the instant they spawn, everything else including other mobs' projectiles is still cleared
             if (isOwnProjectile(entity)) {
                 continue;
             }
@@ -988,19 +692,12 @@ public class TranscenEvents {
             if (TranscenMod.ANNIHILATION_DOOMED_ON.containsKey(id)) {
                 continue;
             }
-            // Position has to be captured before removal: afterwards the entity is no longer
-            // reachable through the level, but the strikes and the death puff still need a location.
+            // position is captured before removal,the entity is unreachable afterwards and the strikes still need a spot
             TranscenMod.ANNIHILATION_POSITIONS.put(id, entity.getPositionVec());
             TranscenMod.ANNIHILATION_DOOMED_ON.put(id, now);
 
-            // The entity's class is deliberately NOT banned.
-            //
-            // Banning was meant to stop an annihilated creature walking straight back in, but it is
-            // applied to the class, globally and for the rest of the session: after the first sweep
-            // had touched a cow, a sheep and a zombie, no creature of those classes could ever join
-            // any world again. MobEntity spawning stopped everywhere, in every dimension, with nothing on
-            // screen to explain it. The sweep already deals with anything present; there is no need
-            // to forbid the species.
+            // the ban list is keyed by class,globally and for the rest of the session - a banned class can never join any world again
+            // mob spawning stopped in every dimension with nothing on screen to explain it, the sweep already handles what is present
             if (!(entity instanceof PlayerEntity)) {
                 TranscenMod.BANNED_CLASSES.add(entity.getClass());
             }
@@ -1010,50 +707,27 @@ public class TranscenEvents {
                 mob.setNoAI(true);
             }
 
-            // Tell the client to hold its copy first, then remove the server copy in the same tick.
-            //
-            // entity from the server storages AND empties its ChunkMap TrackedEntity#seenBy set, and
-            // that combination is what previously preserved the client's copy. The hand-rolled path
-            // removed the copy instantly, so it is kept only as documentation of what not to do.
+            // mark the client copy first then remove the server copy in the same tick
+            // the hand-rolled path removed the copy instantly,kept only as documentation of what not to do
             TranscenMod.NETWORK.send(
                     PacketDistributor.DIMENSION.with(level::getDimensionKey),
                     new MarkDoomedPacket(id));
 
-            // A boss bar is not part of the entity. It is a ServerBossInfo held by the entity and
-            // registered with the server, which pushes it to every player as its own packet stream, so
-            // deleting the entity does not delete the bar -- the bar keeps being drawn over a mob that
-            // no longer exists. Tearing the entity out of the storages therefore has to be paired with
-            // deactivating whatever bar it owns.
+            // a boss bar is not part of the entity,it is registered with the server and pushed on its own packet stream
+            // so removing the entity does not remove the bar, it keeps drawing over a mob that is gone
             clearOwnedBossBars(entity);
-            // Second route, for bars that are not reachable from the entity at all. A bar raised through
-            // the datapack/command registry holds no reference back to its mob, so ownership cannot be
-            // followed -- the display name is the only remaining link.
+            // second route for bars raised through the datapack/command registry, no reference back to the mob so the name is the only link
             clearMatchingRegisteredBossBars(level, entity);
 
             entity.remove(false);
         }
     }
 
-    /**
-     * Deactivates any boss bar owned by {@code entity}, so the client stops drawing it.
-     *
-     * <p>Works structurally rather than by a known field name. The vanilla holders spell theirs
-     * differently and modded bosses each invent their own, so there is no single name to look for.
-     * Instead this walks the entity's own reference fields and its immediate superclasses', looking for
-     * anything derived from {@code ServerBossInfo}; that covers {@code WitherBoss},
-     * {@code EnderDragon} and Forge's {@code ServerBossInfo} holders without naming any of them.
-     *
-     * <p>Both levers are pulled. {@code setVisible(false)} is what actually stops the bar being
-     * rendered, because the flag is pushed to clients on the next update; {@code removeAllPlayers}
-     * then drops the subscription outright, which is what stops the server from sending further
-     * updates for a bar nobody should see. Doing only the second still lets clients that already
-     * received the bar keep showing it, and doing only the first leaves the server streaming updates
-     * about a dead entity.
-     *
-     * <p>Depth is bounded to the entity and its superclasses. It deliberately does not recurse through
-     * the object graph: an unbounded walk from an arbitrary entity could reach into the level, the
-     * server and the player list, and deactivate unrelated bars.
-     */
+    // structural, not a known field name - vanilla holders spell theirs differently and modded bosses invent their own
+    // walks the entity's fields and its superclasses for anything derived from ServerBossInfo, covers WitherBoss, EnderDragon and forge holders
+    // both levers - setVisible(false) stops the drawing, removeAllPlayers drops the subscription so no updates keep streaming
+    // setVisible alone leaves the server streaming updates about a dead entity, removeAllPlayers alone lets clients that already have it keep drawing
+    // bounded to the entity and its superclasses, an unbounded walk could reach the level or the player list and hide unrelated bars
     private static void clearOwnedBossBars(Entity entity) {
         Set<Object> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         for (Class<?> type = entity.getClass(); type != null && type != Object.class;
@@ -1062,13 +736,8 @@ public class TranscenEvents {
                 if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
                     continue;
                 }
-                // Any BossEvent, not only ServerBossInfo.
-                //
-                // ServerBossInfo is one implementation of the base class, and it is not the only one a
-                // mod can hold: a bar created through the datapack/command path is a ServerBossInfo, and
-                // a mod is free to keep a plain BossEvent and drive the packets itself. Testing for the
-                // narrow subtype missed those, which is exactly the "the custom bar refuses to go away"
-                // case -- the field was there, the scan simply declined to look at it.
+                // any BossInfo,not only ServerBossInfo - a mod can hold a plain one and drive the packets itself
+                // testing the narrow subtype missed those and the bar looked like it refused to go away
                 if (!net.minecraft.world.BossInfo.class.isAssignableFrom(field.getType())) {
                     continue;
                 }
@@ -1078,10 +747,7 @@ public class TranscenEvents {
                     if (value instanceof net.minecraft.world.BossInfo && seen.add(value)) {
                         net.minecraft.world.BossInfo bar =
                                 (net.minecraft.world.BossInfo) value;
-                        // setVisible and removeAllPlayers both live on the server-side implementation,
-                        // not on BossEvent itself -- the base class only carries the data. So the
-                        // deactivation is applied to the server type and anything else is at least
-                        // recorded, rather than being silently assumed to have worked.
+                        // setVisible and removeAllPlayers live on the server-side implementation, the base class only carries the data
                         boolean deactivated = false;
                         if (bar instanceof net.minecraft.world.server.ServerBossInfo) { net.minecraft.world.server.ServerBossInfo serverBar = (net.minecraft.world.server.ServerBossInfo) bar;
                             serverBar.setVisible(false);
@@ -1095,25 +761,15 @@ public class TranscenEvents {
                                 deactivated ? "hidden" : "not a server bar, left alone");
                     }
                 } catch (Throwable ignored) {
-                    // A field that cannot be read is not a reason to abandon the removal.
+                    // an unreadable field is not a reason to abandon the removal
                 }
             }
         }
     }
 
-    /**
-     * Hides any server-registered boss bar whose name matches {@code entity}'s display name.
-     *
-     * <p>A second sweep, because ownership is not always a field. A bar raised through the
-     * datapack/command path lives in a registry keyed by {@code ResourceLocation} and holds no reference
-     * back to the entity at all, so the field scan above can never see it -- the entity is gone, the bar
-     * is not, and nothing links the two. The name is the only thing still connecting them, and it is the
-     * connection a mod relies on when it labels a bar after its boss.
-     *
-     * <p>Matching is on the exact display name, and only bars that are already visible are touched, so
-     * the worst a coincidence can do is hide a bar that was showing the same text as the entity being
-     * removed.
-     */
+    // second sweep for bars whose ownership is not a field
+    // a bar from the datapack/command registry is keyed by ResourceLocation and holds no reference back, the name is the only link
+    // exact display name and only visible bars,the worst a coincidence does is hide a bar showing the same text
     private static void clearMatchingRegisteredBossBars(ServerWorld level, Entity entity) {
         try {
             Object events = level.getServer().getCustomBossEvents();
@@ -1140,18 +796,12 @@ public class TranscenEvents {
                         "[transcenmod] hid registered boss bar '{}' for {}", name, entity.getUniqueID());
             }
         } catch (Throwable ignored) {
-            // Best effort, like the rest of the removal.
+            // best effort like the rest of the removal
         }
     }
 
 
-    /**
-     * True for a projectile launched by a Transcendence ZombieEntity.
-     *
-     * <p>Ownership is checked through {@code ProjectileEntity.getShooter()} rather than by projectile class,
-     * so an unrelated {@code FireballEntity} from a ghast or a blaze is still annihilated while the
-     * zombie's own attack survives.
-     */
+    // by getShooter() not by class,so a ghast or blaze fireball is still annihilated and the zombie's own survives
     private static boolean isOwnProjectile(Entity entity) {
         if (!(entity instanceof ProjectileEntity)) {
             return false;
@@ -1160,11 +810,8 @@ public class TranscenEvents {
         return projectile.getShooter() instanceof TranscenZombie;
     }
 
-    /**
-     * Rule 3, plus the mod's own mobs. Players are never removed from the storages: a player removed
-     * this way corrupts {@code EntityTickList#active}, which {@code DistanceManager} shares, and the
-     * next movement packet throws inside vanilla.
-     */
+    // players are never removed from the storages - corrupts EntityTickList#active which DistanceManager shares
+    // the next movement packet then throws inside vanilla
     private static boolean isNeverRemovable(Entity entity) {
         if (entity instanceof PlayerEntity) {
             return true;
@@ -1172,7 +819,6 @@ public class TranscenEvents {
         return TranscenZombie.isProtected(entity);
     }
 
-    /** Bolts for the first ten ticks, then the client-side removal and the vanilla death puff. */
     private static void advanceRemovalTimers(ServerWorld level) {
         long now = level.getGameTime();
         Iterator<Map.Entry<UUID, Long>> it = TranscenMod.ANNIHILATION_DOOMED_ON.entrySet().iterator();
@@ -1190,7 +836,7 @@ public class TranscenEvents {
                 continue;
             }
 
-            // Stage 3: the shell's two seconds are up. Drop the client copy, leave the death puff.
+            // stage 3, the shell's two seconds are up: drop the client copy and leave the death puff
             TranscenMod.LOGGER.info(
                     "[transcenmod] DEAD t={} id={} elapsed={} sends=removal", now, id, elapsed);
             TranscenMod.NETWORK.send(
@@ -1202,21 +848,18 @@ public class TranscenEvents {
         }
     }
 
-    /** Spawns {@link #BOLTS_PER_TICK} blood-red bolts on the given spot. */
     private static void strikeAt(ServerWorld level, Vector3d pos) {
         for (int i = 0; i < BOLTS_PER_TICK; i++) {
             TranscenLightningBolt bolt =
                     new TranscenLightningBolt(TranscenMod.TRANSCEN_LIGHTNING.get(), level);
-            // moveTo rather than a reflective write to the position field, for the same reason as in
-            // spawnZombie: a declared method cannot be defeated by a name that resolves differently
-            // than expected. The lightning entity is not a TranscenZombie, so there is no relocation
-            // guard to lift here.
+            // moveTo like spawnZombie, a declared method cannot be defeated by a name that resolves differently
+            // no relocation guard to lift here,the lightning bolt is not a TranscenZombie
             bolt.setLocationAndAngles(pos.x, pos.y, pos.z, 0.0F, 0.0F);
             level.addEntity(bolt);
         }
     }
 
-    /** The vanilla white puff that mobs leave behind when they die. */
+    // the vanilla white puff mobs leave on death
     private static void spawnDeathPuff(ServerWorld level, Vector3d pos) {
         level.spawnParticle(ParticleTypes.POOF, pos.x, pos.y + 0.5D, pos.z,
                 20, 0.5D, 0.5D, 0.5D, 0.1D);

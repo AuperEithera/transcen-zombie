@@ -19,89 +19,55 @@ import net.minecraft.util.math.vector.Vector3d;
 
 import java.util.List;
 
-/**
- * The Transcendence ZombieEntity.
- *
- * <p>It runs on completely vanilla zombie AI -- goal selectors, navigation, target selection and
- * movement are all inherited and untouched. What this class adds is a stat block and one attack:
- *
- * <ul>
- *   <li>114514 health, 2048 attack damage, 1024 follow range, 30 armour, 20 armour toughness;</li>
- *   <li>once every second it throws an explosion-4 fireball at the nearest living thing.</li>
- * </ul>
- *
- * <p>It is also deliberately unremovable: {@code remove} and {@code setHealth} are no-ops, so
- * {@code /kill} and ordinary damage cannot get rid of it. Nothing here touches {@code setPos}, so
- * the AI is free to walk it around.
- */
+// vanilla zombie ai untouched, this class only adds a stat block and one attack
+// 114514 health, 2048 attack damage, 1024 follow range, 30 armour, 20 armour toughness
+// once a second it throws an explosion-4 fireball at the nearest living thing
+// remove and setHealth are no-ops so /kill and ordinary damage cannot drop it
 public class TranscenZombie extends ZombieEntity {
 
-    /** 20 ticks == one second. */
     private static final int FIREBALL_INTERVAL = 20;
-    /** FireballEntity explosion radius. */
     private static final int EXPLOSION_POWER = 4;
-    /** Search radius for the nearest target, matching the follow range attribute. */
+    // matches the follow range attribute,so a target it can see is always in range
     private static final double TARGET_RANGE = 1024.0D;
 
     private int fireballCooldown = 0;
 
-    /**
-     * How far this entity may be moved in a single position write before the move is refused.
-     *
-     * <p>Two metres. Ordinary play never comes close: walking, knockback and the AI's own navigation
-     * all move a mob in fractions of a block per tick. What exceeds it is anything that relocates the
-     * entity outright -- {@code /tp}, another mod teleporting it away, or the common trick of pushing
-     * an entity to a far-away coordinate so the chunk system unloads and discards it.
-     */
+    // two metres, ordinary play never comes close: walking, knockback and ai navigation move a mob
+    // in fractions of a block per tick
+    // what exceeds it is anything that relocates the entity outright - /tp, another mod teleporting
+    // it, or pushing it to a far coordinate so the chunk unloads and discards it
     private static final double MAX_SINGLE_MOVE = 2.0D;
 
-    /**
-     * Set while this mod is deliberately placing the entity, so the guard below lets that placement
-     * through.
-     *
-     * <p>Needed because a respawn is by definition a large jump: the new entity starts at the world
-     * origin and is then positioned where the old one died, which is usually far more than two metres.
-     * Without this the repair could never place the zombie it just created.
-     */
+    // set while this mod is deliberately placing the entity so the guard below lets that through
+    // a respawn is by definition a large jump,the new entity starts at the world origin and is then
+    // placed where the old one died, without this the repair could never place what it just created
     private boolean allowOneRelocation;
 
     public TranscenZombie(EntityType<? extends ZombieEntity> type, World level) {
         super(type, level);
     }
 
-    /**
-     * Refuses any position write that would move this entity more than {@link #MAX_SINGLE_MOVE}.
-     *
-     * <p>{@code setPosRaw} is the lowest-level position writer in this version, and {@code setPos},
-     * {@code absMoveTo}, {@code teleportTo} and every "move this entity somewhere" helper end up here.
-     * Guarding it therefore covers every relocation route at once, including one that arrives through
-     * reflection or an AccessTransformer, because the check lives in the method body rather than in
-     * the caller.
-     *
-     * <p>Two details of this version matter and both were got wrong first time round. The signature
-     * here is {@code (double, double, double)}, not a {@code Vector3d} overload, and the method is
-     * {@code final} in vanilla -- which is why the AccessTransformer drops the final for
-     * {@code m_20219_} and why the original draft's simpler approach of overriding
-     * {@code setPos(double,double,double)} cannot be used: in this version {@code setPos} is final and
-     * a different method entirely.
-     *
-     * <p>Silently refuses rather than throwing: a mod that teleports the entity has no reason to expect
-     * anything, and returning normally leaves it exactly where it was instead of half-moved. Momentum
-     * is zeroed too, so a relocation attempt cannot be turned into a legitimate-looking drift.
-     */
+    // refuses any position write that moves this entity more than MAX_SINGLE_MOVE
+    // setPosRaw is the lowest level position writer in this version, setPos absMoveTo teleportTo and
+    // every move-somewhere helper end up here,so guarding it covers every relocation route at once,
+    // including reflection or an accesstransformer caller, the check is in the method body
+    // version traps: the signature here is (double,double,double) with no Vector3d overload, and the
+    // method is final in vanilla - hence the accesstransformer public-f line for m_20219_
+    // setPos(double,double,double) cannot be used instead,different method and also final
+    // refuses silently rather than throwing: a mod that teleports the entity expects nothing, and
+    // returning normally leaves it exactly where it was instead of half-moved
+    // momentum is zeroed too so a relocation attempt cannot be turned into a legit looking drift
     @Override
     public void setRawPosition(double x, double y, double z) {
-        // The guard does not apply while the entity is still sitting at the world origin.
-        //
-        // Both a spawn egg and this mod's own revival build the entity first and place it second, and that
-        // placement is longer than the limit -- so a guard that was always on rejected the game's own
-        // move and left every zombie at (0,0,0). The original fix was a flag set on the first write, which
-        // failed for the same reason in a subtler way: construction itself writes the origin, so the flag
-        // was already set before the real placement arrived, and that placement was refused too.
-        //
-        // Testing the position rather than counting writes removes that ordering problem. An entity at
-        // exactly the origin has not been placed anywhere yet, so there is no location to defend and the
-        // move is allowed; once it is anywhere else the guard engages and stays engaged.
+        // no guard while the entity still sits at the world origin
+        // a spawn egg and this mod's own revival both build the entity first and place it second, and
+        // that placement is longer than the limit, an always-on guard rejected the game's own move and
+        // left every zombie at (0,0,0)
+        // a flag set on the first write failed too, construction itself writes the origin so the flag
+        // was already set before the real placement arrived
+        // testing the position removes that ordering problem,an entity at exactly the origin has not
+        // been placed anywhere yet so there is no location to defend, once it is elsewhere the guard
+        // engages and stays engaged
         boolean stillAtOrigin = this.getPosX() == 0.0D && this.getPosY() == 0.0D && this.getPosZ() == 0.0D;
         boolean placing = stillAtOrigin
                 && !(x == 0.0D && y == 0.0D && z == 0.0D);
@@ -110,12 +76,10 @@ public class TranscenZombie extends ZombieEntity {
             recordPosition();
             return;
         }
-        // The guard applies on both sides.
-        //
-        // It used to be server-only, which made no sense: the point is that the zombie cannot be moved
-        // away from where it belongs, and a client-side move desynchronises the copy the player actually
-        // sees -- the entity stays put on the server and slides away on screen, or the reverse. A rule
-        // about where this entity is has to hold wherever the entity exists.
+        // the guard applies on both sides
+        // it used to be server only which made no sense, a client side move desynchronises the copy
+        // the player sees - the entity stays put on the server and slides away on screen or the
+        // reverse, a rule about where this entity is has to hold wherever the entity exists
         if (!this.allowOneRelocation) {
             double dx = x - this.getPosX();
             double dy = y - this.getPosY();
@@ -129,35 +93,26 @@ public class TranscenZombie extends ZombieEntity {
         recordPosition();
     }
 
-    /** Keeps the watch-list entry on wherever the zombie actually is. */
+    // keeps the watch list entry on wherever the zombie actually is
     private void recordPosition() {
-        // A retired zombie never records itself.
-        //
-        // This is what made a wipe fail to stick, and it is why the symptom was a flicker rather than
-        // nothing happening. Emptying the watch list is not enough on its own: every position update runs
-        // this method, so each still-present zombie wrote itself straight back into the list the wipe had
-        // just emptied. The sweep then found an entry with no entity, raised a replacement, and that
-        // replacement recorded itself too -- remove, respawn, remove, respawn, on screen.
-        //
-        // Refusing to record a retired zombie closes the loop without a flag to reset and without a
-        // suppression window: the generation already says this entity is on its way out, and it cannot
-        // talk its way back in.
+        // a retired zombie never records itself,this is what made a wipe fail to stick
+        // emptying the list is not enough on its own: every position update runs this method so each
+        // still present zombie wrote itself straight back in, the sweep then found an entry with no
+        // entity raised a replacement and that replacement recorded itself too - remove respawn remove
+        // respawn on screen
+        // refusing a retired zombie closes the loop with no flag to reset and no suppression window
         if (this.ownGeneration != generation) {
             return;
         }
-        // Server only: the watch list is what the revival reads, and revival runs on the server. A client
-        // copy would be written and never read.
+        // server only: the watch list is what the revival reads and revival runs on the server, a
+        // client copy would be written and never read
         if (!this.getEntityWorld().isRemote) {
             TranscenMod.ZOMBIE_POSITIONS.put(this.getUniqueID(), new Vector3d(this.getPosX(), this.getPosY(), this.getPosZ()));
         }
     }
 
-    /**
-     * Runs {@code action} with the relocation guard disabled, then restores it.
-     *
-     * <p>Used by this mod's own repair path, which has to place a freshly built zombie at the position
-     * it is replacing.
-     */
+    // runs action with the relocation guard off then restores it,only the mod's own repair path needs
+    // this, it has to place a freshly built zombie at the position it replaces
     public void withRelocationAllowed(Runnable action) {
         boolean previous = this.allowOneRelocation;
         this.allowOneRelocation = true;
@@ -169,10 +124,11 @@ public class TranscenZombie extends ZombieEntity {
     }
 
     public static AttributeModifierMap.MutableAttribute createAttributes() {
-        // ZombieEntity's own factory, not MobEntity's. A zombie carries attributes of its own --
-        // SPAWN_REINFORCEMENTS_CHANCE among them -- and ZombieEntity reads them back while it is being
-        // placed. Building on MobEntity's base set left those absent, and that read threw a
-        // NullPointerException from inside ZombieEntity the moment a spawn egg put one down.
+        // ZombieEntity's own factory, not MobEntity's
+        // a zombie carries attributes of its own - SPAWN_REINFORCEMENTS_CHANCE among them - and
+        // ZombieEntity reads them back while it is being placed, building on MobEntity's base set left
+        // them absent and that read threw a NullPointerException from inside ZombieEntity the moment a
+        // spawn egg put one down
         return net.minecraft.entity.monster.ZombieEntity.func_234342_eQ_()
                 .createMutableAttribute(Attributes.MAX_HEALTH, 114514.0D)
                 .createMutableAttribute(Attributes.ATTACK_DAMAGE, 2048.0D)
@@ -187,51 +143,36 @@ public class TranscenZombie extends ZombieEntity {
         return 114514F;
     }
 
-    /**
-     * Legal because the AccessTransformer removes {@code final} from
-     * {@code LivingEntity#getMaxHealth()}; see the {@code public-f} line in
-     * META-INF/accesstransformer.cfg.
-     */
-
+    // legal because the accesstransformer drops final from LivingEntity#getMaxHealth()
+    // see the public-f line in META-INF/accesstransformer.cfg
     @Override
     public void setHealth(float health) {
-        // Refuses to lose health, so the entity cannot be killed through the normal path.
+        // no-op,so the entity cannot be killed through the normal path
     }
 
     @Override
     public void remove() {
-        // Refuses removal, so /kill and ordinary death cannot get rid of it.
-        //
-        // it rewires the storages directly and starts at setRemoved -- so a bypass would open a second
-        // entrance that nothing needs, weakening the guard for no gain.
+        // refuses removal,/kill and ordinary death cannot get rid of it
+        // a bypass would be a second entrance that nothing needs and would weaken the guard
     }
 
-    /**
-     * Never catches fire from daylight.
-     *
-     * <p>{@code isSunBurnTick} is the single predicate vanilla consults before setting an entity
-     * alight, so returning {@code false} removes the behaviour at its source rather than putting the
-     * fire out afterwards. That matters here because the zombie refuses damage: burning would not
-     * kill it, it would only make it a permanent flame that obscures the model and litters the area
-     * with fire.
-     */
+    // never catches fire from daylight
+    // isSunBurnTick is the single predicate vanilla consults before setting an entity alight so
+    // returning false removes the behaviour at its source instead of putting the fire out afterwards
+    // that matters because the zombie refuses damage: burning would not kill it,it would only make a
+    // permanent flame that hides the model and litters fire around
     @Override
     protected boolean isInDaylight() {
         return false;
     }
 
-    /**
-     * Never a baby.
-     *
-     * <p>Not the mod's own behaviour: {@code ZombieEntity.finalizeSpawn} rolls a chance to make an ordinary
-     * zombie small, and every subclass inherits it. The result here was a one-block-tall variant appearing
-     * among the full-size ones, which is not what this entity is meant to be -- it has a fixed model, a
-     * fixed health pool and a boss bar, none of which make sense scaled down.
-     *
-     * <p>Both halves are overridden. {@code setBaby} stops the state ever being set, and {@code isBaby}
-     * answers false regardless, so anything that reads the flag -- size, speed, the rendering scale, a
-     * spawn egg's own checks -- is told the same thing even if some other path sets it behind this class.
-     */
+    // never a baby
+    // not the mod's own behaviour, ZombieEntity.finalizeSpawn rolls a chance to make an ordinary
+    // zombie small and every subclass inherits it
+    // result was a one block tall variant among the full size ones,this entity has a fixed model a
+    // fixed health pool and a boss bar, none of which make sense scaled down
+    // both halves are overridden: setChild stops the state ever being set and isChild answers false
+    // regardless,so anything reading the flag is told the same thing even if another path sets it
     @Override
     public void setChild(boolean baby) {
         super.setChild(false);
@@ -242,96 +183,65 @@ public class TranscenZombie extends ZombieEntity {
         return false;
     }
 
-    /**
-     * No idle sound.
-     *
-     * <p>{@code getAmbientSound} is what {@code MobEntity#playAmbientSound} plays at the interval
-     * {@code getAmbientSoundInterval} reports, so returning {@code null} removes the idle groan
-     * without touching hurt or death sounds -- those are separate methods, and silencing the entity
-     * entirely would make it feel absent.
-     */
+    // no idle sound
+    // getAmbientSound is what MobEntity#playAmbientSound plays at the getAmbientSoundInterval rate,so
+    // returning null drops the idle groan without touching hurt or death sounds - those are separate
+    // methods and silencing the entity entirely would make it feel absent
     @Override
     protected SoundEvent getAmbientSound() {
         return null;
     }
 
-    /**
-     * Set when the encounter is being wiped. A generation, not a boolean.
-     *
-     * <p>Each zombie records the generation it was born in. A wipe bumps the counter, which marks exactly
-     * the zombies that existed before it; anything created afterwards carries the new number and is
-     * untouched. A plain boolean cannot express that: it stays true forever, so every zombie the repair
-     * creates afterwards also removes itself, and the repair answers by creating another -- thousands of
-     * entities in a single tick. The generation has no such tail and needs no resetting.
-     */
+    // set when the encounter is being wiped,a generation not a boolean
+    // each zombie records the generation it was born in, a wipe bumps the counter which marks exactly
+    // the zombies that existed before it, anything created afterwards carries the new number
+    // a plain boolean cannot say that: it stays true forever so every zombie the repair creates also
+    // removes itself and the repair answers with another - thousands of entities in one tick,the
+    // generation has no such tail and needs no resetting
     private static volatile long generation;
 
     private long ownGeneration = generation;
 
-    /** Starts a new generation, marking every zombie that already exists. */
+    // starts a new generation which marks every zombie that already exists
     public static void beginWipe() {
         ++generation;
     }
 
-    /**
-     * True when this zombie has been dismissed and is on its way out.
-     *
-     * <p>Public so the watch-list code can refuse to record it. A dismissed zombie must not be able to
-     * re-enter the list the wipe just emptied, or the repair rebuilds it and the encounter never ends.
-     */
+    // true when this zombie is dismissed and on its way out
+    // public so the watch list code can refuse to record it,a dismissed zombie must not re-enter the
+    // list the wipe just emptied or the repair rebuilds it and the encounter never ends
     public boolean isRetired() {
         return this.ownGeneration != generation;
     }
 
-    /**
-     * Refuses to be marked removed.
-     *
-     * <p>{@code setRemoved} is {@code final} in vanilla and is the <b>only</b> writer of the
-     * {@code removalReason} field, which in turn is the only thing {@code isRemoved()} reports. That
-     * makes it the single narrowest place to stop a removal: everything that ultimately marks an
-     * entity as gone -- the vanilla death path, a datapack, another mod's storage sweep -- has to come
-     * through here, whether or not it bothered to call {@code remove()} first.
-     *
-     * <p>Unconditional, with no exemption for any caller. A version that let the mod's own teardown
-     * through by consulting a flag was tried and removed: it weakened the guard, and the entity has since
-     * been left exactly as it was while the wipe was rewritten not to need it.
-     *
-     * <p>Legal because the AccessTransformer drops {@code final} from this method; see the
-     * {@code public-f} line for {@code m_142467_} in META-INF/accesstransformer.cfg. {@code remove()}
-     * is also overridden, but that covers a different set of callers -- the two together are what make
-     * the entity unremovable rather than merely hard to kill.
-     */
+    // refuses to be marked removed
+    // setRemoved is final in vanilla and is the only writer of removalReason, which is the only thing
+    // isRemoved() reports,so it is the single narrowest place to stop a removal - the vanilla death
+    // path a datapack and another mod's storage sweep all have to come through here whether or not
+    // they called remove() first
+    // unconditional with no exemption for any caller,a flag based version was tried and removed: it
+    // weakened the guard and the entity has since been left as it was
+    // legal because the accesstransformer drops final from this method,see the public-f line for
+    // m_142467_ in META-INF/accesstransformer.cfg, remove() is also overridden but that covers a
+    // different set of callers, the two together are what make the entity unremovable
     @Override
     protected void setDead() {
-        // Deliberately does not call super: calling it would set the removal flag and the entity
-        // would stop rendering, being ticked, and being found by every storage query.
+        // deliberately no super call: it would set the removal flag and the entity would stop
+        // rendering, stop being ticked and stop turning up in every storage query
     }
 
-    /**
-     * Returns {@code false} on purpose.
-     *
-     * <p>{@code LivingEntity#hurt} is what produces the hurt feedback: {@code hurtTime} drives the
-     * red damage overlay while burning, and the caller plays the hurt sound off the same result. A
-     * {@code true} return is exactly what triggers both, so reporting "no damage taken" is the only
-     * way to get a zombie that neither flashes red nor grunts when it is burning or being hit.
-     *
-     * <p>The attacker still dies; that is the mod's whole point and independent of this return
-     * value.
-     */
-    /**
-     * Turns away the damage that was killing revived zombies and making them look duplicated.
-     *
-     * <p>The log gave this away with {@code zombie hurt by null (source cramming)}: entities crammed into
-     * the same block take continuous suffocation damage, and when several zombies briefly share a spot --
-     * which is exactly what a revival does -- they damage each other to death. Each death made the sweep
-     * find the id missing and raise a replacement, which crowded the spot again. That cycle is what looked
-     * like a duplication bug and what made the client stutter; the entity count was a symptom, not a
-     * cause, and the earlier work on UUIDs, chunk loading and spawn positions was aimed at the wrong
-     * thing entirely.
-     *
-     * <p>Only cramming is refused. Everything else still goes through {@link #hurt}, so a legitimate
-     * removal by another mod's weapon is unaffected.
-     */
+    // returns false on purpose
+    // LivingEntity#hurt is what produces the hurt feedback: hurtTime drives the red damage overlay
+    // and the caller plays the hurt sound off the same result,a true return is exactly what triggers
+    // both so reporting no damage taken is the only way to get a zombie that neither flashes red nor
+    // grunts when it burns or is hit
+    // the attacker still dies, that is the mod's whole point and independent of this return value
+    // turns away the damage that was killing revived zombies and making them look duplicated
+    // the log gave it away: entities crammed into the same block take continuous suffocation damage
+    // and when several zombies briefly share a spot - exactly what a revival does - they damage each
+    // other to death, each death made the sweep raise a replacement and that crowded the spot again
+    // only cramming is refused, everything else still goes through hurt so a legitimate removal by
+    // another mod's weapon is unaffected
     private static boolean isCramming(DamageSource source) {
         return source != null && "cramming".equals(source.getDamageType());
     }
@@ -343,33 +253,32 @@ public class TranscenZombie extends ZombieEntity {
         }
         Entity attacker = source.getTrueSource();
 
-        // Reports every hit and what produced it. The retaliation path below is the only thing that
-        // clears the attacker, so if this never appears then nothing downstream can have run either, and
-        // the fault is in reaching hurt at all rather than in the retaliation itself.
+        // logs every hit and what produced it,the retaliation path below is the only thing that clears
+        // the attacker so if this never appears nothing downstream ran either and the fault is in
+        // reaching hurt at all rather than in the retaliation
         TranscenMod.LOGGER.info(
                 "[transcenmod] zombie hurt by {} (source {}), attacker={}",
                 attacker == null ? "null" : attacker.getType() + "/" + attacker.getName().getString(),
                 source.getDamageType(),
                 attacker == null ? "none" : attacker.getClass().getName());
 
-        // The retaliation is not just losing health: the attacker is torn out of the world outright.
-        //
-        // means the player is cleared by the identical mechanism rather than by a second, weaker one.
-        // Note what it does and does not do to a player: it detaches them from the level's storages and
-        // empties their client-tracking set, so the server copy is gone at once and the client keeps
-        // rendering its own copy for the usual two seconds. It deliberately does not ban the player's
-        // class, so a player who respawns or rejoins comes back normally -- being deleted is a
-        // consequence of the attack, not a permanent lockout.
+        // the retaliation is not just losing health, the attacker is torn out of the world outright
+        // going through the same path as the zombie means the player is cleared by the identical
+        // mechanism rather than by a second weaker one
+        // it detaches them from the level's storages and empties their client tracking set so the
+        // server copy is gone at once and the client keeps rendering its own copy for the usual two
+        // seconds, it deliberately does not ban the player's class so a player who respawns or rejoins
+        // comes back normally - being deleted is a consequence of the attack not a permanent lockout
         if (attacker instanceof net.minecraft.entity.player.ServerPlayerEntity) { net.minecraft.entity.player.ServerPlayerEntity player = (net.minecraft.entity.player.ServerPlayerEntity) attacker;
-            // Retaliation outranks the egg, so this is set before anything else runs. It makes the
-            // injected getHealth report zero for this player, which means the clearing below cannot be
-            // undone by the egg's protection -- the player was killed by the zombie, not merely detached
-            // while still alive.
+            // retaliation outranks the egg so this is set before anything else runs,it makes the
+            // injected getHealth report zero for this player which means the clearing below cannot be
+            // undone by the egg's protection - the player was killed by the zombie not merely detached
+            // while still alive
             com.example.transcenmod.util.RetaliationState.mark();
             TranscenMod.LOGGER.info("[transcenmod] retaliation: marked, clearing {}", player.getName().getString());
-            // The death overlay is asked for first. Once the player has been detached their tracking set
-            // is empty, and Forge's per-player packet send resolves the target through exactly that
-            // tracking, so anything sent afterwards would go nowhere.
+            // the death overlay is asked for first,once the player is detached their tracking set is
+            // empty and Forge's per player packet send resolves the target through exactly that
+            // tracking,so anything sent afterwards would go nowhere
             TranscenMod.NETWORK.send(
                     net.minecraftforge.fml.network.PacketDistributor.PLAYER.with(() -> player),
                     new com.example.transcenmod.network.DeathScreenPacket());
@@ -393,15 +302,12 @@ public class TranscenZombie extends ZombieEntity {
     public void tick() {
         super.tick();
 
-        // A retired zombie removes itself, with super.setRemoved, on both sides.
-        //
-        // super is statically bound, so this bypasses this class's own refusal without weakening it --
-        // no other caller can reach it, and nothing reflective is involved. The teardown belongs to the
-        // entity.
-        //
-        // Deliberately no isClientSide check. Removing only on the server leaves the client's copy in
-        // place, and the client's copy is what the player sees: the entity is gone from the world and
-        // still standing on screen. Both sides run this, so both drop it.
+        // a retired zombie removes itself with super.setDead on both sides
+        // super is statically bound so this bypasses this class's own refusal without weakening it, no
+        // other caller can reach it and nothing reflective is involved
+        // deliberately no isClientSide check,removing only on the server leaves the client's copy in
+        // place and the client's copy is what the player sees: gone from the world and still standing
+        // on screen, both sides run this so both drop it
         if (this.ownGeneration != generation) {
             super.setDead();
             return;
@@ -416,12 +322,9 @@ public class TranscenZombie extends ZombieEntity {
         }
     }
 
-    /**
-     * Finds the closest living entity that is not another Transcendence mob and lobs a fireball.
-     *
-     * <p>Creative and spectator players are skipped: an explosion-4 fireball is pure annoyance to
-     * someone who cannot be hurt by it, and creative players are usually building.
-     */
+    // finds the closest living entity that is not another Transcendence mob and lobs a fireball
+    // creative and spectator players are skipped,an explosion-4 fireball is pure annoyance to someone
+    // who cannot be hurt by it and creative players are usually building
     private void throwFireballAtNearest() {
         AxisAlignedBB area = this.getBoundingBox().grow(TARGET_RANGE);
         List<LivingEntity> candidates = this.getEntityWorld().getEntitiesWithinAABB(LivingEntity.class,  area, 
@@ -446,14 +349,14 @@ public class TranscenZombie extends ZombieEntity {
 
         FireballEntity fireball = new FireballEntity(this.getEntityWorld(), this,
                 direction.x, direction.y, direction.z);
-        // 1.16.5's constructor carries no power argument, so the field is written directly;
-        // accesstransformer.cfg widens it for exactly this line.
+        // 1.16.5's constructor carries no power argument so the field is written directly
+        // accesstransformer.cfg widens it for exactly this line
         fireball.explosionPower = EXPLOSION_POWER;
         fireball.setPosition(this.getPosX(), this.getPosYEye() - 0.2D, this.getPosZ());
         this.getEntityWorld().addEntity(fireball);
     }
 
-    /** True for entities the zombie should never lob a fireball at. */
+    // true for entities the zombie should never lob a fireball at
     private static boolean isUntargetable(LivingEntity entity) {
         if (entity instanceof PlayerEntity) { PlayerEntity player = (PlayerEntity) entity;
             return player.isCreative() || player.isSpectator();
@@ -461,7 +364,7 @@ public class TranscenZombie extends ZombieEntity {
         return false;
     }
 
-    /** True when {@code entity} should never be annihilated by the mod's removal sweep. */
+    // true when entity should never be annihilated by the mod's removal sweep
     public static boolean isProtected(Entity entity) {
         return entity instanceof TranscenZombie || entity instanceof TranscenLightningBolt;
     }

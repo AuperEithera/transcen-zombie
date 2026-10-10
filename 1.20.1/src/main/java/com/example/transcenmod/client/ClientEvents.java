@@ -19,17 +19,10 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import org.lwjgl.opengl.GL11;
 
-/**
- * Client-side presentation: the Transcendence bar, the screen rendering and the background loop.
- *
- * <p>Visibility is server-driven through {@code HudSyncPacket}, because the bar has to be correct
- * even when the client's rendering view does not contain the zombie. Right-clicking the spawn egg
- * additionally arms it locally via {@link ActivateHudPacket}. Either source is enough.
- *
- * <p>No member touched here needs AccessTransformer widening; this package lives entirely inside
- * public Forge API. Registered from {@code FMLClientSetupEvent}, so it never loads on a dedicated
- * server.
- */
+// bar,screen and music for the encounter - client side only
+// visibility is server driven through HudSyncPacket: the bar must stay right even when the zombie is
+// outside the client render view. the spawn egg also arms it locally via ActivateHudPacket,either source is enough
+// no access transformer needed, this package sits in public forge api and loads from FMLClientSetupEvent
 public class ClientEvents {
 
     private static final TranscenBossBar BAR = new TranscenBossBar();
@@ -40,35 +33,25 @@ public class ClientEvents {
     private static int tickCount = 0;
 
     static {
-        // The packet handler reaches the client half through this hook, so the common-side code
-        // never has to name a client-only class.
+        // hook for the packet handlers so the common-side code never names a client-only class
         ActivateHudPacket.setClientHook(ClientEvents::activateHud);
         com.example.transcenmod.network.WipeEndedPacket.setClientHook(ClientEvents::deactivateHud);
         com.example.transcenmod.network.WipeRequestPacket.setClientHook(ClientEvents::deactivateHud);
     }
 
-    /** Called from the packet handler when the spawn egg is used. */
     public static void activateHud() {
-        // Right-click switched the protection back on, so the override is lifted and the bar and the
-        // music are allowed to run again.
+        // right click put protection back on: lift the override so bar and music may run again
         AnnihilationClientState.setProtectionOff(false);
         TranscenMod.HUD_ACTIVE = true;
-        // Latch as well as switch on. The server's later "no zombie" updates must not be able to turn
-        // the encounter back off, or the bar and the overlay strobe whenever something removes the
-        // zombie and the repair puts it back.
+        // latch as well as switch on. the server's later "no zombie" updates must not turn the encounter
+        // off, or the bar and overlay strobe whenever something removes the zombie and the repair restores it
         AnnihilationClientState.latchHud();
     }
 
-    /**
-     * Keeps the death screen shut while the egg is carried, unless this mod asked for it.
-     *
-     * <p>Without this the screen is requested at zero health long before anything else can react, and a
-     * player sitting at zero health with the screen suppressed is still a player the game considers dead
-     * -- the screen would be requested again on the next update. Cancelling the request closes that loop.
-     *
-     * <p>The mod's own forced screen is exempt. When the zombie reflects damage it deliberately asks for
-     * the death overlay, and refusing that here would cancel the very thing the packet was sent to do.
-     */
+    // keeps the death screen shut while the egg is carried, unless this mod asked for it
+    // without it the screen is requested at zero health before anything else can react, and a player
+    // sitting at zero with the screen suppressed still counts as dead - cancelling the request breaks that loop
+    // the mod's own forced screen is exempt, refusing it would cancel the very thing the packet was sent to do
     @SubscribeEvent
     public static void onScreenOpening(net.minecraftforge.client.event.ScreenEvent.Opening event) {
         if (!(event.getNewScreen() instanceof net.minecraft.client.gui.screens.DeathScreen)) {
@@ -89,15 +72,10 @@ public class ClientEvents {
         event.setCanceled(true);
     }
 
-    /**
-     * Installs the forced death overlay for one frame, by writing the screen field directly.
-     *
-     * <p>Deliberately not {@code Minecraft#setScreen}: that raises {@code ScreenEvent.Opening} first, and
-     * this very class cancels that event to keep the death screen shut -- so any other mod watching the
-     * same event could cancel this screen too. Placing it through {@code setScreen} made the forced
-     * overlay the single most interceptable step in the whole feature, which is the opposite of what was
-     * asked for.
-     */
+    // installs the forced death overlay for one frame by writing the screen field directly
+    // not Minecraft#setScreen: that fires ScreenEvent.Opening first, and this very class cancels that
+    // event to keep the death screen shut, so any other mod watching it could cancel this screen too -
+    // setScreen made the forced overlay the most interceptable step in the feature,a direct field write is not
     @SubscribeEvent
     public static void onRenderTick(TickEvent.RenderTickEvent event) {
         if (event.phase != TickEvent.Phase.END || !TranscenMod.SHOW_DEATH_SCREEN) {
@@ -107,16 +85,14 @@ public class ClientEvents {
         if (mc.player == null) {
             return;
         }
-        // The hardcore flag is false: this is a scare, not a real hardcore death, and true would make the
-        // screen offer "return to title" instead of the normal respawn button.
+        // hardcore false: this is a scare,true would offer "return to title" instead of the respawn button
         net.minecraft.client.gui.screens.DeathScreen screen =
                 new net.minecraft.client.gui.screens.DeathScreen(
                         Component.translatable("deathScreen.title"), false);
         screen.resize(mc, mc.getWindow().getGuiScaledWidth(), mc.getWindow().getGuiScaledHeight());
-        // Direct field write -- no ScreenEvent.Opening, so no other mod can veto it.
+        // direct field write so no ScreenEvent.Opening, nothing gets to veto it
         mc.screen = screen;
-        // Consumed only after the screen is installed, so a failure part-way through cannot silently
-        // swallow the request.
+        // consumed only after the screen is installed, a failure part-way cannot silently swallow the request
         TranscenMod.SHOW_DEATH_SCREEN = false;
     }
 
@@ -131,9 +107,8 @@ public class ClientEvents {
         Minecraft mc = Minecraft.getInstance();
         boolean remoteHud = AnnihilationClientState.isHudActive();
         boolean zombieVisible = mc.level != null && zombiePresent(mc.level);
-        // A sighting starts the encounter and is then remembered. This is the "once it appears, it
-        // stays" rule: the sighting is what turns it on, and nothing turns it off except leaving the
-        // world.
+        // a sighting starts the encounter and is then remembered - "once it appears it stays": the sighting
+        // turns it on and nothing turns it off except leaving the world
         if (zombieVisible) {
             AnnihilationClientState.latchHud();
         }
@@ -142,40 +117,31 @@ public class ClientEvents {
                 || AnnihilationClientState.isHudLatched()
                 || zombieVisible) && mc.level != null;
 
-        // Protection off overrides everything above, including the visible-zombie term. Otherwise a zombie
-        // still on screen for a moment after the switch restarts the music as soon as it is stopped, which
-        // is a music that will not stay off.
+        // protection off beats everything above, the visible-zombie term included, else a zombie still on
+        // screen a moment after the switch restarts the music the instant it is stopped
         if (AnnihilationClientState.isProtectionOff()) {
             active = false;
         }
 
         keepDoomedShellsRed(mc);
 
-        // The zombie's health is a fixed constant and setHealth is a no-op, so the displayed
-        // fraction is always full; the bar's identity comes from its colour cycle, not from damage.
+        // zombie health is a fixed constant and setHealth is a no-op so the fraction always reads full,
+        // the bar's identity comes from its colour cycle not from damage
         BAR.setProgress(remoteHud ? clamp(AnnihilationClientState.hudProgress()) : 1.0F);
         BAR.setVisible(active);
         BAR.tick();
         TranscenMusic.tick(active);
     }
 
-    /**
-     * Forces doomed shells to render red using vanilla's own hurt-flash mechanism.
-     *
-     * <p>This is deliberately <b>not</b> {@code RenderSystem.setShaderColor}: vanilla does not tint
-     * a hurt entity through the shader colour at all. {@code LivingEntityRenderer#getOverlayCoords}
-     * packs the overlay texture coordinate from
-     * {@code OverlayTexture.v(entity.hurtTime > 0 || entity.deathTime > 0)}, and a positive
-     * {@code hurtTime} makes the model sample the red overlay texel. Re-setting {@code hurtTime}
-     * every tick keeps that overlay latched for as long as the shell exists, which is exactly the
-     * standing red the shell is supposed to show.
-     *
-     * <p>{@code hurtTime} is a public field, so no access widening is needed.
-     */
+    // forces doomed shells red through vanilla's own hurt-flash, deliberately not RenderSystem.setShaderColor --
+    // vanilla never tints a hurt entity via shader colour. LivingEntityRenderer#getOverlayCoords packs the
+    // overlay uv from OverlayTexture.v(hurtTime > 0 || deathTime > 0) and a positive hurtTime makes the model
+    // sample the red texel. re-setting hurtTime every tick holds that overlay for as long as the shell exists,
+    // which is the standing red it is supposed to show. hurtTime is public,no access widening needed
     private static void keepDoomedShellsRed(Minecraft mc) {
         AnnihilationClientState.noteTick();
-        // The actual latching happens in DoomedRenderer#onRenderLivingPre, because LivingEntity
-        // decrements hurtTime every tick and the value has to be positive at render time.
+        // the real latching is in DoomedRenderer#onRenderLivingPre, because LivingEntity decrements hurtTime
+        // every tick and the value has to be positive at render time
     }
 
     private static float clamp(float v) {
@@ -185,14 +151,10 @@ public class ClientEvents {
         return v > 1.0F ? 1.0F : v;
     }
 
-    /**
-     * Pins the egg holder's health on the client as well as the server.
-     *
-     * <p>Both sides matter and for different reasons. The server's copy decides whether the player is
-     * alive at all; the client's copy decides what the health bar shows and whether the death screen is
-     * raised. A client left at zero would keep asking for that screen no matter what the server believed,
-     * so the value is re-asserted here every tick rather than trusted to arrive.
-     */
+    // pins the egg holder's health on the client as well as the server, both sides matter for different reasons
+    // the server's copy decides whether the player is alive, the client's decides what the health bar shows
+    // and whether the death screen is raised - a client left at zero would keep asking for that screen no
+    // matter what the server believed, so the value is re-asserted every tick rather than trusted to arrive
     @SubscribeEvent
     public static void onClientPlayerTick(TickEvent.PlayerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
@@ -208,17 +170,10 @@ public class ClientEvents {
         }
     }
 
-    /**
-     * Draws this mod's bar directly, for use when the whole HUD pass has been suppressed.
-     *
-     * <p>Needed because suppressing that pass also suppresses the event the bar normally draws from --
-     * the event is raised inside the very method being cancelled. Without this the encounter would remove
-     * every other mod's HUD output and its own along with them, which is the same "it kills the wrong
-     * things" failure this feature has already been through once, only with this mod as the victim.
-     *
-     * <p>Public so the mixin's helper can reach it without a hard reference to a client-only class from
-     * common code.
-     */
+    // draws this mod's bar directly, for when the whole HUD pass has been suppressed
+    // suppressing that pass also suppresses the event the bar normally draws from, it is raised inside the
+    // very method being cancelled - without this the encounter would remove every other mod's HUD output
+    // and its own with it. public so the mixin's helper reaches it without naming a client-only class
     public static void renderOwnBarDirectly(GuiGraphics gui) {
         if (!BAR.isVisible()) {
             return;
@@ -241,7 +196,6 @@ public class ClientEvents {
         BAR.render(gui, TITLE, width, 12);
     }
 
-    /** Cycles the sky tint while the encounter is active. */
     @SubscribeEvent
     public static void onRenderSky(RenderLevelStageEvent event) {
         if (!BAR.isVisible() || event.getStage() != RenderLevelStageEvent.Stage.AFTER_SKY) {
@@ -256,7 +210,6 @@ public class ClientEvents {
         RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT, Minecraft.ON_OSX);
     }
 
-    /** Drops every scrap of per-world client state when the connection goes away. */
     @SubscribeEvent
     public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         AnnihilationClientState.reset();
@@ -274,25 +227,20 @@ public class ClientEvents {
         return false;
     }
 
-    /**
-     * Ends the encounter on this client: the bar goes, the music stops, the red shells are dropped, and
-     * this side's copies of the zombies are taken out of the level by hand.
-     *
-     * <p>The latch is released too. It exists so a temporary removal cannot make the bar flicker, and it
-     * is deliberately immune to the server's "off" updates -- so a wipe has to clear it explicitly or the
-     * bar would outlive the zombies it belongs to.
-     */
+    // ends the encounter on this client: bar, music,red shells, and this side's copies of the zombies
+    // are taken out of the level by hand
+    // the latch is released too. it keeps a temporary removal from flickering the bar and is deliberately
+    // immune to the server's "off" updates, so a wipe must clear it or the bar outlives the zombies it belongs to
     public static void deactivateHud() {
         TranscenMod.HUD_ACTIVE = false;
         AnnihilationClientState.unlatchHud();
         AnnihilationClientState.setHud(false, 0.0F);
         AnnihilationClientState.clearAllDoomed();
 
-        // Take this side's copies out of the level by hand.
-        //
-        // Clearing the shell set stops the red tint, not the zombie: the client entity is still in its own
-        // level and is still drawn. The server removing its copy does not remove this one, so without this
-        // the player keeps looking at a zombie that exists nowhere but their own screen.
+        // take this side's copies out of the level by hand
+        // clearing the shell set stops the red tint, not the zombie: the client entity is still in its own
+        // level and still drawn, and the server removing its copy does not remove this one - without this
+        // the player keeps looking at a zombie that exists nowhere but their own screen
         Minecraft client = Minecraft.getInstance();
         if (client.level != null) {
             java.util.List<Entity> copies = new java.util.ArrayList<>();
@@ -313,24 +261,17 @@ public class ClientEvents {
         AnnihilationClientState.setProtectionOff(true);
         BAR.setVisible(false);
         TranscenMusic.stop();
-        // Deliberately does NOT advance the zombie generation. That counter is shared with the server in a
-        // single-player session, and retiring zombies is the server's decision; doing it here made the
-        // client bump it as well -- and this method is called from several packet handlers, so one wipe
-        // advanced it several times. Every advance retired the zombies again, which is the flicker:
-        // removed, restored, removed. The server dismisses them; the client only drops its copies.
+        // deliberately does NOT advance the zombie generation. that counter is shared with the server in a
+        // single-player session and retiring zombies is the server's decision; bumping it here made the
+        // client bump it as well, and several packet handlers call this so one wipe advanced it several
+        // times - every advance retired the zombies again, which is the flicker: removed,restored,removed
     }
 
-    /**
-     * Left-click while carrying the egg asks the server to toggle the protection.
-     *
-     * <p>Three cases are covered because they arrive by different routes. {@code LeftClickEmpty} only
-     * exists on the client, so it has to be forwarded; {@code LeftClickBlock} and {@code AttackEntityEvent}
-     * cover swings that landed on something. Without the third, hitting a zombie with the egg would not
-     * toggle, only hitting air or a block would.
-     *
-     * <p>Nothing is cancelled: this is an added effect, and suppressing the swing would also suppress the
-     * client's own hit feedback.
-     */
+    // left click while carrying the egg asks the server to toggle the protection
+    // three routes: LeftClickEmpty exists only on the client so it has to be forwarded, LeftClickBlock and
+    // AttackEntityEvent cover swings that landed on something - without the third,hitting a zombie with the
+    // egg would not toggle, only air or a block would
+    // nothing is cancelled: this is an added effect, suppressing the swing would also suppress hit feedback
     private static void requestWipe() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) {

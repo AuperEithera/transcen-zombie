@@ -4,26 +4,16 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Client-side view of what the server is in the middle of annihilating.
- *
- * <p>An entity that the server has already pulled out of its storages still exists on the client
- * until the removal packet arrives two seconds later. During that window it is rendered forced red,
- * which is the "the thing is doomed" feedback. Membership is keyed by UUID and shared between the
- * packet handlers and the render hooks.
- */
+// client-side view of what the server is annihilating right now
+// the server removes the entity at once,but the removal packet lands about 2s later
+// inside that window it draws forced red,keyed by UUID and shared by packet handlers and render hooks
 public final class AnnihilationClientState {
 
     private static final Set<UUID> DOOMED = ConcurrentHashMap.newKeySet();
 
-    /**
-     * True while the protection is switched off.
-     *
-     * <p>Forces the bar and the music off regardless of what else is true. Bar visibility is an OR of
-     * several sources, one of which is "a zombie is visible", and a zombie can remain visible for a
-     * moment after the switch is thrown -- which was enough to start the music straight back up after
-     * turning it off. This is the term that overrides the others rather than adding to them.
-     */
+    // force-off term,not another input to the OR
+    // bar visibility ORs several sources one of which is "a zombie is visible" and that stays true a moment past the switch
+    // that alone restarted the music right after it was turned off
     private static volatile boolean protectionOff;
 
     public static void setProtectionOff(boolean off) {
@@ -34,30 +24,24 @@ public final class AnnihilationClientState {
         return protectionOff;
     }
 
-    /** Drops every remembered shell, so no red remnant is left over a discarded entity. */
+    // no red remnant over an entity the client already discarded
     public static void clearAllDoomed() {
         DOOMED.clear();
     }
 
 
-    /** Server-driven HUD state; see {@code HudSyncPacket}. */
+    // server-driven HUD state,see HudSyncPacket
     private static volatile boolean hudActive;
     private static volatile float hudProgress = 1.0F;
 
-    /**
-     * Latches once the HUD has been switched on, and is never cleared by a server update.
-     *
-     * <p>The encounter's bar and overlay are a frame around the encounter, not a readout of one
-     * entity. Tying their visibility to "a zombie exists right now" makes them strobe the instant
-     * anything removes that zombie -- the state goes off and back on as the repair puts it back, and
-     * that reads as flickering. Once the encounter has started, the only way it should end is the
-     * player leaving the world, which is exactly what {@link #reset()} is for.
-     */
+    // latches on the first active update and no server off clears it
+    // bar and overlay frame the encounter,not one entity
+    // "a zombie exists right now" made them strobe when repair removed and re-added it,the only exit is #reset()
     private static volatile boolean hudLatched;
 
     private AnnihilationClientState() {}
 
-    /** Marks an entity as doomed, so the renderer forces it red. */
+    // renderer forces red while this is set
     public static void markDoomed(UUID id) {
         if (DOOMED.add(id)) {
             }
@@ -70,22 +54,16 @@ public final class AnnihilationClientState {
     public static boolean isDoomed(UUID id) {
         return DOOMED.contains(id);
     }
-    /** Called once per client tick, before anything else looks at the set. */
+    // once per client tick,before anything reads the set
     public static void noteTick() {
         if (!DOOMED.isEmpty()) {
             }
     }
 
-    /** Called by the red application path so the probe can prove it ran. */
+    // called from the red application path so a probe can prove it ran
 
-    /**
-     * Applies a server HUD update.
-     *
-     * <p>Turning on latches; turning off is ignored once latched. The server is not the authority on
-     * whether the encounter is running -- it cannot see the client's own "the egg was used" state --
-     * so its "off" is treated as "no zombie visible right now", which is not the same thing and must
-     * not blank the screen.
-     */
+    // active latches,hudActive stays latched OR active so a later off cannot blank the screen
+    // the server cannot see the client's own "egg used" state,its off only means no zombie visible
     public static void setHud(boolean active, float progress) {
         if (active) {
             hudLatched = true;
@@ -94,7 +72,7 @@ public final class AnnihilationClientState {
         hudProgress = progress;
     }
 
-    /** Arms the HUD from the client side, e.g. when the spawn egg is used. */
+    // client-side arming,spawn egg use today
     public static void latchHud() {
         hudLatched = true;
         hudActive = true;
@@ -104,13 +82,8 @@ public final class AnnihilationClientState {
         return hudLatched;
     }
 
-    /**
-     * Releases the latch, so the encounter can be switched off.
-     *
-     * <p>The latch exists so an ordinary removal cannot make the bar flicker, and it is deliberately
-     * immune to the server's "off" updates. A deliberate wipe is the one case that has to get past it,
-     * and this is the only way through -- without it the bar would outlive the zombies it belongs to.
-     */
+    // the one path past the latch,a deliberate wipe
+    // otherwise the latch is immune to the server's off and the bar outlives its zombies
     public static void unlatchHud() {
         hudLatched = false;
         hudActive = false;
@@ -124,7 +97,7 @@ public final class AnnihilationClientState {
         return hudProgress;
     }
 
-    /** Called when the connection goes away, so nothing leaks between worlds. */
+    // connection teardown so nothing leaks between worlds
     public static void reset() {
         DOOMED.clear();
         hudActive = false;

@@ -4,36 +4,18 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
-/**
- * Retired render hook. Kept only as a record of the approach that does not work.
- *
- * <p>An earlier revision tinted doomed entities with {@code RenderSystem.setShaderColor} in
- * {@code RenderLivingEvent.Pre}. That has no effect on a living entity: vanilla never tints a hurt
- * mob through the shader colour. It packs the overlay texture coordinate instead --
- * {@code LivingEntityRenderer#getOverlayCoords} ->
- * {@code OverlayTexture.pack(u(0), v(hurtTime > 0 || deathTime > 0))} -- and a positive
- * {@code hurtTime} makes the model sample the red overlay texel.
- *
- * <p>The working implementation now lives in
- * {@link ClientEvents#keepDoomedShellsRed(net.minecraft.client.Minecraft)}, which re-latches
- * {@code hurtTime} every client tick.
- */
+// not setShaderColor - vanilla never tints a living entity through the shader colour
+// it packs the hurt texel instead,OverlayTexture.pack(u(0),hurtTime>0||deathTime>0)
+// live path is ClientEvents.keepDoomedShellsRed
 public class DoomedRenderer {
 
-    /** A positive value that survives until the overlay coordinate is packed. */
+    // has to stay positive until the overlay coord is packed
     private static final int HURT_LATCH = 10;
 
 
 
-    /**
-     * Latches the red hurt overlay immediately before the entity is drawn.
-     *
-     * <p>This has to happen here rather than in the client tick. {@code LivingEntity.tick()} decrements
-     * {@code hurtTime} every tick, so a value written during the tick is already back to zero by the
-     * time {@code LivingEntityRenderer#getOverlayCoords} reads it, and the model samples the white
-     * overlay instead of the red one. Writing it in the render event means the value is still positive
-     * at the moment the overlay coordinate is packed.
-     */
+    // render time not tick time - LivingEntity#tick decrements hurtTime,so a value written there is
+    // already zero when getOverlayCoords reads it and the model samples the white texel
     @SubscribeEvent
     public static void onRenderLivingPre(RenderLivingEvent.Pre<?, ?> event) {
         if (!AnnihilationClientState.isDoomed(event.getEntity().getUUID())) {
@@ -41,14 +23,10 @@ public class DoomedRenderer {
         }
         LivingEntity living = event.getEntity();
 
-        // Both fields that OverlayTexture#v reads, latched as late as possible. hurtTime drives the
-        // red damage overlay; deathTime is forced alongside it so the overlay stays latched even if
-        // something resets the hurt timer between the tick and the draw.
+        // both fields OverlayTexture#v reads,hurtTime is the red overlay,deathTime forced with it so
+        // a reset between tick and draw cannot drop the latch
         living.hurtTime = HURT_LATCH;
         living.deathTime = HURT_LATCH;
 
-        // Vanilla tints a hurt mob through the overlay texture, not through the shader colour, so
-        // this is the only piece of state that needs setting. It is applied here rather than in the
-        // client tick because LivingEntity#baseTick decrements hurtTime every tick.
     }
 }
