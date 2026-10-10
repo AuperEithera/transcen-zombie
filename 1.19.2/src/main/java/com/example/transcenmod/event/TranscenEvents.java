@@ -42,11 +42,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-// executeCoreLogic runs from every living entity tick and walks the whole entity list, the
-// lastSweptTick latch holds that to one sweep per server tick - without it a normal world does
-// tens of thousands of traversals per tick and ends in an OutOfMemoryError
-// players are never torn out of the entity storages, that corrupts EntityTickList#active which
-// DistanceManager shares and the next movement packet then throws inside vanilla
 public class TranscenEvents
 {
 
@@ -111,7 +106,6 @@ public class TranscenEvents
         }
     }
 
-    // 18000 is dusk in 1.19.2,so locking it here reads as deep night
     private static final long LOCKED_TIME = 18000L;
 
     private static void forceNightAndStorm(ServerLevel level)
@@ -591,9 +585,6 @@ public class TranscenEvents
             }
         }
 
-        // counted from the snapshot and not from a by-class query - the query reported zero on this
-        // setup even right after a successful add while the level's entity list grew by one each time
-        // so there was no way to decide enough zombies already exist and every tick added another one
         int aliveCount = 0;
         for (Entity entity : snapshot)
         {
@@ -678,10 +669,6 @@ public class TranscenEvents
                     {
                         continue;
                     }
-                    // probed defensively - fastutil's primitive collections implement java.util.Set
-                    // too and contains(Object) on those casts its argument to the primitive wrapper, so
-                    // asking a LongSet about a uuid throws ClassCastException
-                    // a set that cannot answer the question is one that cannot be holding the id
                     try
                     {
                         field.setAccessible(true);
@@ -712,19 +699,11 @@ public class TranscenEvents
         }
     }
 
-    // registered on the watch list before it is added,so a removal in the same tick still leaves an
-    // entry behind to repair
-    // facing is restored rather than left at zero - a revived zombie that snaps to due south is
-    // visibly not the same entity
     private static void spawnZombie(ServerLevel level, UUID id, Vec3 pos, float yaw, float pitch)
     {
         TranscenZombie zombie = new TranscenZombie(TranscenMod.TRANSCEN_ZOMBIE.get(), level);
         zombie.setUUID(id);
 
-        // moveTo with the relocation guard lifted rather than a reflective write to the position field
-        // the field write relied on the field resolving under the name position and on 1.19.2 it was
-        // silently not working - 1794 zombies were created and every one of them sat at the origin
-        // moveTo is a declared method so there is no name to get wrong
         zombie.withRelocationAllowed(() -> zombie.moveTo(pos.x, pos.y, pos.z, yaw, pitch));
 
         zombie.setYHeadRot(yaw);

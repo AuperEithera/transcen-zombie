@@ -1,10 +1,10 @@
 /*
- * TranscenZombie JVMTI agent -- load-order control over other agents and coremods.
+ * TranscenZombie JVMTI agent -- load-order control over the agents and coremods around it.
  *
  * WHY THIS EXISTS
  * ---------------
- * A Java agent attached from inside a mod (java.lang.instrument via VirtualMachine.loadAgent, the
- * same trick the mod this defends against uses) can only be attached once Minecraft is already
+ * A Java agent attached from inside the game (java.lang.instrument via VirtualMachine.loadAgent, the
+ * same trick a foreign agent uses) can only be attached once Minecraft is already
  * running. That is late: by then every entity class is loaded, and the only lever left is
  * retransformation. This agent is loaded with -agentlib, which the JVM initialises during startup,
  * before any mod is constructed and before any mod's agent exists. That ordering is the entire
@@ -22,10 +22,10 @@
  * 4. Retransforms every already-loaded removal class after installing the hook, so classes that were
  *    loaded before this agent got control are rewritten too.
  *
- * AGAINST THE MIXIN-BASED CORE MOD
- * --------------------------------
- * The opposing mod's coremod strips other peoples' mixins by dropping every INVOKESTATIC whose
- * descriptor mentions CallbackInfo. That only removes *injections*; it cannot remove a guard that
+ * AGAINST A MIXIN-STRIPPING HOOK
+ * ------------------------------
+ * A hook of that kind strips mixins by dropping every INVOKESTATIC whose descriptor mentions
+ * CallbackInfo. That only removes *injections*; it cannot remove a guard that
  * lives in the method body itself. So the ordering that matters is not "who injects first" but "who
  * writes the class bytes last", and JVMTI settles that with RetransformClasses: retransformation
  * starts from the JVM's pristine copy, discards every previously applied transformation, and runs the
@@ -37,8 +37,8 @@
  * There is no JVMTI call to detach an agent. Once the opposing agent has attached, it stays attached
  * and stays registered; the only way to neutralise it is to make its transformations not matter,
  * which is what the retransformation above achieves. There is deliberately no attempt to unload,
- * crash, or otherwise sabotage the other mod: the goal is that its *removal* logic does not apply to
- * this mod's entities, not that its code stops running.
+ * crash, or otherwise sabotage the agent on the other side: the goal is that its *removal* logic does
+ * not apply to this mod's entities, not that its code stops running.
  *
  * BUILDING
  * --------
@@ -379,7 +379,7 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved) {
 }
 
 /*
- * Loaded through the attach API. Reached if the mod refers to this library by path instead of the JVM
+ * Loaded through the attach API. Reached if the library is named by path instead of the JVM
  * being started with -agentlib; the retransformation pass is what makes this path still useful, since
  * by then the classes are loaded.
  */

@@ -65,10 +65,6 @@ public class TranscenZombie extends Zombie
 
     private void recordPosition()
     {
-        // a retired zombie must not record itself, this is what made a wipe fail and why the symptom was
-        // a flicker rather than nothing: emptying the list is not enough while every position update
-        // writes the zombie straight back in, so the sweep finds an entry with no entity, raises a
-        // replacement and that replacement records itself too - remove, respawn, remove, respawn
         if (this.ownGeneration != generation)
         {
             return;
@@ -190,11 +186,6 @@ public class TranscenZombie extends Zombie
                 source.getMsgId(),
                 attacker == null ? "none" : attacker.getClass().getName());
 
-        // not just losing health, the attacker is torn out of the world: CustomEntityRemover detaches
-        // them from the level's storages and empties their client-tracking set, so the server copy is
-        // gone at once while the client keeps drawing its own for about 2s
-        // the player's class is never banned, a respawn or rejoin comes back normally - being deleted
-        // is a consequence of the attack, not a permanent lockout
         if (attacker instanceof net.minecraft.server.level.ServerPlayer)
         {
             net.minecraft.server.level.ServerPlayer player = (net.minecraft.server.level.ServerPlayer) attacker;

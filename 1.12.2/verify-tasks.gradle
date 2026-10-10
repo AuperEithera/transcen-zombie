@@ -52,6 +52,77 @@ task verifyTransformer(type: JavaExec, dependsOn: 'compileVerifierStandins') {
     ]
 }
 
+// The entity guard transformer has the same failure mode as the one above and one more of its own: its
+// table is a set of names and descriptors, and a table that matches nothing compiles, builds and does
+// nothing at all. This runs the real transformer over stand-in targets twice - once under the plain names
+// and once under the obfuscated names read out of Forge's own deobfuscation data, which is what a coremod
+// transformer actually sees in production - loads the results so the verifier has to accept them, and then
+// calls the guarded methods and checks what happened.
+//
+// None of it is part of `build`; it is a development check.
+task verifyEntityGuard(type: JavaExec, dependsOn: 'compileVerifierStandins') {
+    description = 'Runs the entity guard transformer over stand-in classes and verifies every guard fires.'
+    group = 'verification'
+    classpath = files(sourceSets.main.output) +
+            configurations.verifierAsm +
+            configurations.minecraft +
+            files("$buildDir/verifier/classes")
+    main = 'EntityGuardHarness'
+    args = [
+            file("$buildDir/verifier/classes").absolutePath,
+            file("$buildDir/verifier/guard-out").absolutePath
+    ]
+}
+
+// The AllReturn rewrite, run over stand-in classes in both naming states. The point here is different
+// again three things: the guard this one inserts is a GETSTATIC on AllReturn followed by a frame-joining
+// branch, and without the frame node the verifier rejects every rewritten class; a transformer may not name
+// a class of this mod at all, because it runs inside the class loader's transformer loop (reading
+// AllReturn.allReturn from there is what killed the launch with ClassCircularityError); and the injected
+// guard has to answer a correct default for every return sort.
+//
+// The third argument is the mod's own class directory: the circularity check needs a class loader that can
+// see this mod's classes and the parent's, so it can put the real transformers on the chain and then define
+// a class while that chain runs.
+task verifyAllReturn(type: JavaExec, dependsOn: 'compileVerifierStandins') {
+    description = 'Runs the AllReturn rewrite and verifies the injected guards verify and take effect.'
+    group = 'verification'
+    classpath = files(sourceSets.main.output) +
+            configurations.verifierAsm +
+            configurations.minecraft +
+            files("$buildDir/verifier/classes")
+    main = 'AllReturnHarness'
+    args = [
+            file("$buildDir/verifier/classes").absolutePath,
+            file("$buildDir/verifier/allreturn-out").absolutePath,
+            file("$buildDir/sourcesSets/main").absolutePath
+    ]
+}
+
+// TranscendenceZombieFullPower. Its failure mode is that it changes nothing and the game starts perfectly,
+// so a build that does nothing at all is indistinguishable from one that works - every assertion here is
+// written to be able to fail, and the run carries a positive control that measures the same class before
+// the filter, where the injected body must still be there.
+//
+// The stand-in coremod is modelled on a real one rather than described: one transform() that
+// widens a field for its own renderer and replaces a method body to change behaviour. The filter has to
+// keep the widening (dropping it is what made the game fail to start) and drop the body.
+task verifyFullPower(type: JavaExec, dependsOn: 'compileVerifierStandins') {
+    description = 'Runs FullPowerFilter over a coremod-modified class and verifies ATs survive and bodies do not.'
+    group = 'verification'
+    classpath = files(sourceSets.main.output) +
+            configurations.verifierAsm +
+            configurations.minecraft +
+            files("$buildDir/verifier/classes")
+    main = 'FullPowerHarness'
+    args = [
+            file("$buildDir/verifier/classes").absolutePath,
+            // The mod's own output, so the harness can scan the transformer's instructions for a mention
+            // of another class of this mod. That is the shape that puts a class load inside a class load.
+            sourceSets.main.output.classesDirs.singleFile.absolutePath
+    ]
+}
+
 // ---------------------------------------------------------------------------------------------
 // Note on end-to-end testing
 // ---------------------------------------------------------------------------------------------

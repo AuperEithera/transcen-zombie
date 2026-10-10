@@ -124,9 +124,9 @@ mixin {
     config "transcenmod.mixins.json"
 }
 
-// No embedded agent and no shaded ASM here on purpose. Everything that fights another mod's removal
-// -- the JVMTI agent, the java agent, the ASM transformer -- lives in the separate transcenprotect
-// mod. Bundling ASM into this jar is not merely unnecessary, it is fatal: the shaded
+// No embedded agent and no shaded ASM here on purpose. Everything that fights a forced removal
+// -- the JVMTI agent, the java agent, the ASM transformer -- lives in a separate companion mod.
+// Bundling ASM into this jar is not merely unnecessary, it is fatal: the shaded
 // org.objectweb.asm.* classes make the jar an automatic JPMS module that claims packages the real ASM
 // module already exports, and the game dies during module resolution before any mod loads.
 

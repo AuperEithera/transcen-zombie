@@ -65,7 +65,7 @@ public final class TranscenMusic
         {
             return;
         }
-        // stop first,always - dropping the reference alone is the "music stacks up" bug
+        // stop first,always - dropping the stale handle alone is the "music stacks up" bug
         // isPlaying false does not prove the sound is gone, the handle is lost and a second instance
         // starts on top of the first, repeated ticks pile them higher
         stop();

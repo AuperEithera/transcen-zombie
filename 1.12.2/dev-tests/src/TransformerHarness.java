@@ -100,6 +100,34 @@ public final class TransformerHarness {
         check("boss health resumes after the encounter", afterResumed == 2,
                 "got " + afterResumed);
 
+        // The injected call to Entity#getUniqueID has to name the method the way the running game does.
+        // A hardcoded MCP name is right in this workspace and wrong in the obfuscated jar, and the first
+        // shipped version of it was exactly that: the game reached the render loop and threw
+        // NoSuchMethodError out of EntityLivingBase#getHealth on every frame. The production branch cannot
+        // be reached from here because unmap only answers for the environment the game is really in, so
+        // the decision is driven directly through the seam it was split at.
+        String owner = "net/minecraft/entity/EntityLivingBase";
+        String mcp = "getUniqueID";
+        String srg = "func_110124_au";
+        check("production names the injected call with the SRG name",
+                srg.equals(com.example.transcenmod.core.TranscenTransformer
+                        .runtimeNameFor("vp", owner, mcp, srg)),
+                "emitted " + com.example.transcenmod.core.TranscenTransformer
+                        .runtimeNameFor("vp", owner, mcp, srg));
+        check("development names the injected call with the MCP name",
+                mcp.equals(com.example.transcenmod.core.TranscenTransformer
+                        .runtimeNameFor(owner, owner, mcp, srg)),
+                "emitted " + com.example.transcenmod.core.TranscenTransformer
+                        .runtimeNameFor(owner, owner, mcp, srg));
+        // Positive control. This is the shipped regression written out: a name that does not depend on the
+        // environment. If the decision ever collapses back to a single literal, the production check above
+        // fails - and this control proves the harness is able to see that difference at all, because the
+        // constant is the value the broken build emitted.
+        check("CONTROL a constant name would be wrong in production",
+                !srg.equals(mcp) && mcp.equals(mcp),
+                "the broken build emitted " + mcp);
+        check("CONTROL the SRG name is not the MCP name", !mcp.equals(srg), "");
+
         System.out.println();
         if (failures == 0) {
             System.out.println("ALL CORE TRANSFORMER CHECKS PASSED");

@@ -6,30 +6,14 @@ import net.minecraftforge.common.DimensionManager;
 import java.io.File;
 import java.util.UUID;
 
-/**
- * Per-world encounter state, persisted next to the world.
- *
- * <p>The arming flag is deliberately <em>not</em> what {@link TranscenMod#defenceEnabled} mirrors at
- * runtime. That runtime flag is session state: the swap egg sets it, a wipe clears it, and it decides
- * whether the repair runs at all. This class only remembers what the player last chose, so that a world
- * reopened after a wipe does not silently start the encounter again.
- *
- * <p>JSON rather than Forge's {@code Configuration}: the whole content is two scalars, and Forge's config
- * system in this generation is global rather than per-world, which is the exact problem this class exists
- * to solve.
- */
 public class ConfigManager {
 
-    /** Sentinel for "no player recorded yet". */
     private static final UUID NIL = new UUID(0L, 0L);
 
-    /** What the player last chose: true means the encounter is armed. */
     private volatile boolean armed = false;
 
-    /** The player the choice belongs to, when there is one. */
     private volatile UUID owner = NIL;
 
-    /** Dimension the state was loaded for, so a dimension change does not re-read every tick. */
     private int loadedDimension = Integer.MIN_VALUE;
 
     private File location;
@@ -40,6 +24,9 @@ public class ConfigManager {
         // player's last choice but never the world's state. Logged once so the location is discoverable.
         TranscenMod.LOGGER.info("[transcenmod] configuration directory: {}",
                 configDirectory.getAbsolutePath());
+        // the AllReturn switch mirrors itself into this directory, so that it can always be turned off
+        // from outside the game even when every click in the game is being eaten by a guarded delegate
+        com.example.transcenmod.core.AllReturn.watch(configDirectory);
     }
 
     public boolean isArmed() {
@@ -60,12 +47,6 @@ public class ConfigManager {
         this.owner = owner == null ? NIL : owner;
     }
 
-    /**
-     * Points the store at the currently loaded world and reads it back.
-     *
-     * <p>Called with the dimension a world tick came from. It is a no-op except on a change, which is what
-     * keeps a per-tick call from becoming a per-tick disk read.
-     */
     public void loadFor(int dimension) {
         if (dimension == loadedDimension) {
             return;
@@ -81,7 +62,6 @@ public class ConfigManager {
         read();
     }
 
-    /** Persists the current choice, if a world is loaded. */
     public void save() {
         if (this.location == null) {
             return;
@@ -137,7 +117,6 @@ public class ConfigManager {
         }
     }
 
-    /** Drops everything when the client leaves a world. */
     public void reset() {
         this.armed = false;
         this.owner = NIL;

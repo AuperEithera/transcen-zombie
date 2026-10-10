@@ -16,8 +16,6 @@ public abstract class PlayerHealthMixin
 
     private static final float TRANSCENMOD_FULL_HEALTH = 20.0F;
 
-    // the first 5 calls, all server side, ate the budget and the client reported nothing
-    // that read as "injection never runs on the client" and cost an investigation
     private static volatile boolean transcenmod$reported;
 
     @Inject(method = "getHealth()F", at = @At("HEAD"), cancellable = true)

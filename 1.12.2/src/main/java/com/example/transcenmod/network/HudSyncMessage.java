@@ -5,13 +5,6 @@ import net.minecraftforge.fml.common.network.simpleimpl.IMessage;
 import net.minecraftforge.fml.common.network.simpleimpl.IMessageHandler;
 import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
 
-/**
- * Server to client HUD state: whether an encounter is running, and what fraction of health to show.
- *
- * <p>Driven by the server rather than sniffed from the client's entity list, because the bar has to be
- * right even when the client's rendering view does not contain the zombie. Sent only when the values
- * change, so it costs nothing while idle.
- */
 public class HudSyncMessage implements IMessage {
 
     private boolean active;

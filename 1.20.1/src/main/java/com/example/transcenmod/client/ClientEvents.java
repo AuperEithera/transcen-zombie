@@ -254,10 +254,6 @@ public class ClientEvents
         AnnihilationClientState.setProtectionOff(true);
         BAR.setVisible(false);
         TranscenMusic.stop();
-        // deliberately does NOT advance the zombie generation. that counter is shared with the server in a
-        // single-player session and retiring zombies is the server's decision; bumping it here made the
-        // client bump it as well, and several packet handlers call this so one wipe advanced it several
-        // times - every advance retired the zombies again, which is the flicker: removed,restored,removed
     }
 
     private static void requestWipe()

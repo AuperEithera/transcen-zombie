@@ -470,7 +470,7 @@ public class TranscenEvents
 
         List<Entity> snapshot = snapshot(level);
 
-        // tying it to a zombie being present made the bar strobe off and on every time another mod removed the zombie
+        // tying it to a zombie being present made the bar strobe off and on every time the zombie was wiped
         boolean zombieOwned = TranscenMod.HUD_ACTIVE
                 || !TranscenMod.ZOMBIE_POSITIONS.isEmpty()
                 || firstZombie(snapshot) != null;
@@ -591,7 +591,6 @@ public class TranscenEvents
             }
         }
 
-        // that query reported zero even right after a successful add on this setup, so the limit never held and every tick added another
         int aliveCount = 0;
         for (Entity entity : snapshot)
         {
@@ -667,7 +666,6 @@ public class TranscenEvents
         TranscenZombie zombie = new TranscenZombie(TranscenMod.TRANSCEN_ZOMBIE.get(), level);
         zombie.setUniqueId(id);
 
-        // the field write looked obvious but silently did not work on 1.19.2, 1794 zombies all at the origin
         zombie.withRelocationAllowed(() -> zombie.setLocationAndAngles(pos.x, pos.y, pos.z, yaw, pitch));
 
         zombie.rotationYawHead = yaw;

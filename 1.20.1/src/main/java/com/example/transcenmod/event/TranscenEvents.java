@@ -484,10 +484,6 @@ public class TranscenEvents
 
     private static final Set<UUID> SPAWN_PENDING = new HashSet<>();
 
-    // guarded entry point for the revival check points outside the per-tick sweep, it must never throw
-    // out of an event handler - Forge's EventBus then tries to report the exception and a log4j
-    // conflict in a modpack turns that report into a fatal LinkageError that hides the real cause
-    // printStackTrace rather than the logger for the same reason
     private static void guardedRevive(ServerLevel level)
     {
         try
@@ -548,10 +544,6 @@ public class TranscenEvents
             float yaw = TranscenMod.ZOMBIE_YAW.getOrDefault(id, 0.0F);
             float pitch = TranscenMod.ZOMBIE_PITCH.getOrDefault(id, 0.0F);
 
-            // the level only reports an entity once its chunk is loaded and it is in visible storage, so
-            // a zombie at (0,0,0) in a world whose origin chunks are unloaded is accepted by the manager
-            // and then never becomes findable - the next sweep made another and the sweep after that did
-            // the same, thousands of them every tick
             if (isUnusablePosition(level, pos))
             {
                 pos = positionNearPlayer(level, pos);
@@ -702,11 +694,6 @@ public class TranscenEvents
         TranscenMod.ZOMBIE_YAW.put(id, yaw);
         TranscenMod.ZOMBIE_PITCH.put(id, pitch);
 
-        // the manager keeps every uuid it has ever accepted and refuses a second entity with the same
-        // one,logging a warning and returning false so addFreshEntity looks like it worked
-        // normally pruned on removal, but this zombie overrides setRemoved so its id can stay claimed
-        // while the entity is unfindable - left that way the repair loops invisibly, the add is refused
-        // so nothing appears and no ceiling is ever reached while the entry keeps the next sweep trying
         releaseClaimedUuid(level, id);
 
         level.addFreshEntity(zombie);

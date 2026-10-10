@@ -72,12 +72,6 @@ public class TranscenMod
                     .trackingRange(64)
                     .setUpdateInterval(1)
                     .setShouldReceiveVelocityUpdates(true)
-                    // the load-bearing line, vanilla lightning is client-excluded - it lives on the server and
-                    // the client is told out of band instead of being handed an entity, so a modded subclass
-                    // never arrives through the ordinary spawn path
-                    // this factory is what gives forge a client-side constructor to build the instance with.
-                    // measured before it existed: bolt added on every strike server-side, client never held
-                    // one, renderer never entered
                                         .build("transcen_lightning_bolt"));
 
     private static EntityType<TranscenLightningBolt> lightningType()

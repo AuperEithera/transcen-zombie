@@ -22,42 +22,6 @@ import net.minecraft.world.World;
 
 import java.util.List;
 
-/**
- * Spawn egg for the Transcendence Zombie.
- *
- * <p>Right-clicking restores the protection and spawns the zombie, in that order, and says so in chat.
- *
- * <p>The order is the whole point of the method. The protection used to be switched on after the spawn had
- * already happened, which left the new zombie undefended for the rest of that tick -- long enough for a
- * removal that landed in the same tick to take, and for the zombie to be gone before the protection that
- * was meant to keep it existed. Enabling first removes that window entirely.
- *
- * <p>The message mirrors the one left-click prints. The two gestures are one toggle, so both ends of it
- * report the state; a switch that is silent in one direction is a switch the player has to test to
- * understand.
- *
- * <p>1.12.2 has no {@code ForgeSpawnEggItem}, so this is the vanilla {@code ItemMonsterPlacer} that
- * generation used as its basis instead. That parent does three things the port has to undo or replace, and
- * all three are consequences of 1.12.2 not being flattened:
- *
- * <ul>
- *   <li><b>{@code getSubItems} is overridden to add exactly one egg.</b> The inherited implementation
- *       iterates {@code EntityList.ENTITY_EGGS} and adds a stack for <em>every</em> spawnable mob in the
- *       game -- bat, cow, wither, everything -- each one still an instance of this item and therefore each
- *       one drawn with this item's model. The visible symptom is a creative tab full of identical eggs
- *       that all read as "Spawn Bat", because the name comes from each stack's NBT rather than from the
- *       item. This is not a display bug that can be tuned away; the parent method has to be replaced.</li>
- *   <li><b>{@code getItemStackDisplayName} is replaced by a plain translation lookup.</b> The inherited
- *       version appends the entity name it resolves from the stack's {@code EntityTag} NBT compound, which
- *       vanilla sets in {@code getSubItems} and which this mod's egg never sets. Leaving it inherited would
- *       make the name depend on NBT this item does not use.</li>
- *   <li><b>The entity id is not written into the stack at all.</b> Vanilla's egg carries
- *       {@code EntityTag.id} so that {@code ItemMonsterPlacer.spawnCreature} knows what to build. This egg
- *       does not use that path -- see {@link #onItemRightClick} -- so the tag would be dead weight. It also
- *       could not work: {@code spawnCreature} resolves the id through {@code EntityList}, and this entity is
- *       registered through Forge's {@code EntityEntry} registry rather than being reachable from there.</li>
- * </ul>
- */
 public class SpawnTranscenZombieItem extends ItemMonsterPlacer {
 
     private static final int PRIMARY_COLOR = 0x8B2BE2;
@@ -70,31 +34,15 @@ public class SpawnTranscenZombieItem extends ItemMonsterPlacer {
         setMaxStackSize(64);
     }
 
-    /** The two tint colours, in the order the vanilla egg layers expect: base first, overlay second. */
     public static int[] getColors() {
         return new int[] { PRIMARY_COLOR, SECONDARY_COLOR };
     }
 
-    /**
-     * The name, taken straight from the lang file.
-     *
-     * <p>Deliberately does not call {@code super}: the parent appends the entity name it resolves from the
-     * stack's {@code EntityTag}, and this egg carries no such tag. The key it looks up is
-     * {@code item.transcenmod.transcen_zombie_spawn_egg.name}, which is what {@code setTranslationKey} plus
-     * the vanilla {@code .name} suffix produces.
-     */
     @Override
     public String getItemStackDisplayName(ItemStack stack) {
         return I18n.translateToLocal(getTranslationKey() + ".name").trim();
     }
 
-    /**
-     * Adds one egg to the creative tab, and only one.
-     *
-     * <p>Replaces the inherited implementation, which adds a stack per entry in {@code EntityList.ENTITY_EGGS}
-     * -- every spawnable mob in the game, all sharing this item and therefore this item's model and tint.
-     * The metadata is 0 because this item has no subtypes; the whole stat block it spawns is fixed.
-     */
     @Override
     public void getSubItems(CreativeTabs tab, NonNullList<ItemStack> items) {
         if (this.isInCreativeTab(tab)) {
@@ -118,6 +66,15 @@ public class SpawnTranscenZombieItem extends ItemMonsterPlacer {
 
     private ActionResult<ItemStack> trySpawn(World world, EntityPlayer player, EnumHand hand) {
         ItemStack held = player.getHeldItem(hand);
+
+        // Sneaking turns the same item into the AllReturn switch. It is checked before the isRemote
+        // return below, because the activation is a client side action: the agent runs in this JVM, and
+        // the flag it mirrors lives on this side. The left click behaviour is untouched - it is handled
+        // in ClientEvents and never reaches here.
+        if (player.isSneaking()) {
+            return activateAllReturn(world, player, held);
+        }
+
         if (world.isRemote) {
             return new ActionResult<ItemStack>(EnumActionResult.SUCCESS, held);
         }
@@ -126,6 +83,7 @@ public class SpawnTranscenZombieItem extends ItemMonsterPlacer {
         }
 
         TranscenMod.defenceEnabled = true;
+        com.example.transcenmod.core.CoreHooks.setProtectionEnabled(true);
         TranscenEvents.restartEncounter();
 
         final double dx = player.posX + player.getLookVec().x * 2.0D;
@@ -135,10 +93,6 @@ public class SpawnTranscenZombieItem extends ItemMonsterPlacer {
 
         final TranscenZombie zombie = new TranscenZombie(world);
 
-        // the relocation guard refuses any write longer than MAX_SINGLE_MOVE; a fresh entity is only excused
-        // by the stillAtOrigin test. going through the mod's own escape hatch removes that dependence: if the
-        // guard ever declines, the entity stays at the origin, whose chunk is not loaded, and spawnEntity
-        // returns false for a reason nothing else reports.
         zombie.withRelocationAllowed(new Runnable() {
             @Override
             public void run() {
@@ -171,6 +125,25 @@ public class SpawnTranscenZombieItem extends ItemMonsterPlacer {
         if (!player.capabilities.isCreativeMode) {
             held.shrink(1);
         }
+        return new ActionResult<ItemStack>(EnumActionResult.SUCCESS, held);
+    }
+
+    /**
+     * Shift + right click: the red line, and AllReturn on.
+     *
+     * The message is the client's own chat, so it is sent on the client. Server and integrated server
+     * share one JVM and one LaunchClassLoader, so the flag the guards read is set by the same call.
+     * On a dedicated server the client half of this is what runs, which is the half that matters: the
+     * agent and the transformer both live in the client's JVM.
+     */
+    private ActionResult<ItemStack> activateAllReturn(World world, EntityPlayer player, ItemStack held) {
+        if (!world.isRemote) {
+            // the client drives this; the server side only has to not spawn anything
+            return new ActionResult<ItemStack>(EnumActionResult.SUCCESS, held);
+        }
+        com.example.transcenmod.core.AllReturn.set(true);
+        player.sendMessage(new TextComponentString(
+                "\u00a7cTranscendenceAllReturn is Activated!"));
         return new ActionResult<ItemStack>(EnumActionResult.SUCCESS, held);
     }
 

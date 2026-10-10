@@ -83,11 +83,6 @@ public class ClientEvents
         AnnihilationClientState.setProtectionOff(true);
         BAR.setVisible(false);
         TranscenMusic.stop();
-        // deliberately does NOT advance the zombie generation - that static counter is shared with the
-        // server and retiring zombies is the server's call; bumping it here made the client advance it
-        // too, and this method runs from three packet handlers so one wipe advanced it several times
-        // every advance retired the zombies again,which is the flicker
-        // the server dismisses them,this side only drops its copies and stops drawing
     }
 
     private static void requestWipe()
@@ -191,13 +186,6 @@ public class ClientEvents
         }
         DeathScreen screen = new DeathScreen(new TranslationTextComponent("deathScreen.title"), false);
         screen.resize(mc, mc.getMainWindow().getScaledWidth(), mc.getMainWindow().getScaledHeight());
-        // displayGuiScreen,not a bare field write -
-        // the bare write was meant to deny other mods a veto over GuiScreenEvent.InitGuiEvent,but it also
-        // skipped everything displayGuiScreen does around that event: the outgoing screen's removal, the
-        // incoming screen's init() and -the one that mattered- the mouse ungrab
-        // the result was a client that thought no screen was open while the pointer stayed captured and
-        // the widgets were never built,so the player could neither move nor use the hotbar
-        // a veto is still defended against by re-asserting once after the event has already fired
         mc.displayGuiScreen(screen);
         if (mc.currentScreen != screen)
         {

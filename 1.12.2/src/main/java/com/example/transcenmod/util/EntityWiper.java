@@ -1,10 +1,12 @@
 package com.example.transcenmod.util;
 
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ClassInheritanceMultiMap;
+import net.minecraft.world.IWorldEventListener;
 import net.minecraft.world.World;
+import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
-import net.minecraftforge.fml.common.ObfuscationReflectionHelper;
 
 import java.lang.reflect.Field;
 import java.util.AbstractList;
@@ -12,21 +14,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 
-// setDead only flips a flag. The entity stays in World.loadedEntityList and in the chunk's per-section set,
-// so the tick loop keeps running it and the renderer keeps drawing it. One entry in the forge list, a screen
-// full of copies. This class takes it out for real.
-//
-// The removal walks all the way down rather than calling ClassInheritanceMultiMap#remove:
-//
-//     ClassInheritanceMultiMap            mc wrapper, holds knownKeys and map
-//       -> Map<Class<?>, List<T>> map     one bucket per class the entity is assignable to
-//            -> ArrayList elementData     java, and the array is the bottom of it
-//
-// The mc fields go through ObfuscationReflectionHelper, not raw reflection: after reobfuscation they are
-// field_180216_b and field_180218_a, so a literal "knownKeys" lookup would work in the dev workspace and
-// fail in the shipped jar. The helper remaps the name per environment. The ArrayList fields are java.util
-// and are never renamed, so plain reflection is correct for those.
 public final class EntityWiper {
 
     private EntityWiper() {}
@@ -40,40 +30,113 @@ public final class EntityWiper {
             return;
         }
 
+        // removeEntityDangerously is the removal. it runs vanilla's own order - chunk entry, world list,
+        // then onEntityRemoved - and everything below the isDead flag belongs to it, so nothing here sets or
+        // works around that flag.
+        try {
+            world.removeEntityDangerously(entity);
+        } catch (Throwable failure) {
+            System.err.println("[transcenmod] removeEntityDangerously failed for " + entity + ": " + failure);
+        }
+
+        // the three things onEntityRemoved does, by hand and not through it. done as well as the call above
+        // rather than instead of it, because removeEntityDangerously throws before reaching onEntityRemoved
+        // if its chunk step fails, and then all three would be skipped.
+
+        // Entity:2974. isAddedToWorld is private. It is a Forge addition, so it is absent from both mapping
+        // tables and keeps its literal name after reobfuscation - no remapping wanted or needed here.
+        try {
+            setMcField(entity, Boolean.FALSE, "isAddedToWorld");
+        } catch (Throwable failure) {
+            System.err.println("[transcenmod] isAddedToWorld not cleared for " + entity + ": " + failure);
+        }
+
+        // World:99 is a protected List<IWorldEventListener>. RenderGlobal's implementation is an empty body
+        // (RenderGlobal:2218) so it costs nothing, and it cannot be skipped without asking each listener
+        // what type it is - which is exactly the dispatch this is here to avoid. a second pass is harmless:
+        // WorldClient keeps both of its sets in hash sets, so a repeat add is a no-op.
+        try {
+            Object listeners = mcField(world, "eventListeners", "field_73021_x");
+            if (listeners instanceof List) {
+                for (Object listener : new ArrayList<Object>((List<?>) listeners)) {
+                    if (listener instanceof IWorldEventListener) {
+                        ((IWorldEventListener) listener).onEntityRemoved(entity);
+                    }
+                }
+            }
+        } catch (Throwable failure) {
+            System.err.println("[transcenmod] listener notify failed for " + entity + ": " + failure);
+        }
+
+        // WorldServer:1129-1130. a second call is harmless: entitiesById is a fastutil Int2ObjectMap whose
+        // remove returns null for a missing key, entitiesByUuid is a HashMap that does the same.
+        if (world instanceof WorldServer) {
+            try {
+                Object byId = mcField(world, "entitiesById", "field_175729_l");
+                if (byId instanceof Int2ObjectMap) {
+                    ((Int2ObjectMap<Entity>) byId).remove(entity.getEntityId());
+                }
+            } catch (Throwable failure) {
+                System.err.println("[transcenmod] entitiesById not cleared for " + entity + ": " + failure);
+            }
+            try {
+                Object byUuid = mcField(world, "entitiesByUuid", "field_175741_N");
+                if (byUuid instanceof Map) {
+                    ((Map<UUID, Entity>) byUuid).remove(entity.getUniqueID());
+                }
+            } catch (Throwable failure) {
+                System.err.println("[transcenmod] entitiesByUuid not cleared for " + entity + ": " + failure);
+            }
+        }
+
+        // the containers the call above does not reach. weatherEffects is a separate list it never touches,
+        // and it clears one chunk section - by the entity's own chunkCoordY, so a stale value lands on the
+        // wrong section while the render loop, which reads the sections directly, keeps drawing the entity.
+        world.weatherEffects.remove(entity);
         world.loadedEntityList.remove(entity);
 
         try {
-            Chunk chunk = world.getChunk(entity.getPosition());
-            if (chunk == null) {
-                return;
-            }
-            ClassInheritanceMultiMap<Entity>[] sections = chunk.getEntityLists();
-            if (sections == null) {
-                return;
-            }
-            for (ClassInheritanceMultiMap<Entity> section : sections) {
-                if (section != null) {
-                    removeFromSection(section, entity);
+            Chunk chunk = world.getChunk(entity.chunkCoordX, entity.chunkCoordZ);
+            ClassInheritanceMultiMap<Entity>[] sections = chunk == null ? null : chunk.getEntityLists();
+            if (sections != null) {
+                for (ClassInheritanceMultiMap<Entity> section : sections) {
+                    if (section != null) {
+                        removeFromSection(section, entity);
+                    }
                 }
+                // vanilla marks the chunk dirty after every entity removal. without it the removal stays in
+                // memory only and the entity is back on the next load.
+                chunk.markDirty();
             }
-            // vanilla marks the chunk dirty after every entity removal. Without it the removal stays in
-            // memory only and the entity is back on the next load.
-            chunk.markDirty();
         } catch (Throwable failure) {
-            System.err.println("[transcenmod] entity removal failed for " + entity + ": " + failure);
+            System.err.println("[transcenmod] chunk removal failed for " + entity + ": " + failure);
         }
     }
 
-    /**
-     * The mc level. knownKeys is every class this section has been asked about, and an entity sits in one
-     * bucket per class it is assignable to, so every matching bucket has to lose it. Missing one leaves the
-     * entity reachable through getByClass, which is what the chunk walk and the collision queries read.
-     */
+    public static void wipeAll(World world) {
+        if (world == null) {
+            return;
+        }
+
+        // copies: wipe takes entities out of the very lists this walks, and the listeners it fires are
+        // synchronous, one of which touches these lists too.
+        for (Entity entity : new ArrayList<Entity>(world.weatherEffects)) {
+            if (!(entity instanceof EntityPlayer)) {
+                wipe(entity);
+            }
+        }
+        for (Entity entity : new ArrayList<Entity>(world.loadedEntityList)) {
+            if (!(entity instanceof EntityPlayer)) {
+                wipe(entity);
+            }
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static void removeFromSection(ClassInheritanceMultiMap<Entity> section, Entity entity) {
-        Set<Class<?>> knownKeys = (Set<Class<?>>) mcpField(ClassInheritanceMultiMap.class, section, "knownKeys");
+        Set<Class<?>> knownKeys = (Set<Class<?>>) mcField(section, "knownKeys", "field_180216_b");
         Map<Class<?>, List<Entity>> buckets =
-                (Map<Class<?>, List<Entity>>) mcpField(ClassInheritanceMultiMap.class, section, "map");
+                (Map<Class<?>, List<Entity>>) mcField(section, "map", "field_180218_a");
         if (knownKeys == null || buckets == null) {
             throw new IllegalStateException("ClassInheritanceMultiMap internals are null");
         }
@@ -90,11 +153,6 @@ public final class EntityWiper {
         }
     }
 
-    /**
-     * The java level, down to the array. The bucket is an ArrayList, so the entity is in its elementData and
-     * nowhere else. ArrayList#remove would find it; this does the arraycopy by hand - shift the tail down,
-     * null the unused last slot, drop size, and bump modCount the way ArrayList does.
-     */
     private static void removeFromList(List<Entity> bucket, Entity entity) {
         if (!(bucket instanceof ArrayList)) {
             throw new IllegalStateException("expected an ArrayList bucket, got " + bucket.getClass().getName());
@@ -108,7 +166,7 @@ public final class EntityWiper {
         int size = ((Integer) rawSize).intValue();
         for (int i = 0; i < size; i++) {
             // identity, not equals: Entity does not override equals, and a revived zombie has to be matched
-            // by reference or a same-looking one elsewhere in the list would be taken out instead
+            // as the same object or a same-looking one elsewhere in the list would be taken out instead
             if (data[i] == entity) {
                 int moved = size - i - 1;
                 if (moved > 0) {
@@ -125,9 +183,51 @@ public final class EntityWiper {
         }
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static Object mcpField(Class owner, Object instance, String name) {
-        return ObfuscationReflectionHelper.getPrivateValue(owner, instance, name);
+    /**
+     * Reads a minecraft field by any of its names, walking up from the instance's own class.
+     *
+     * Two things ruled out the obvious helpers. ObfuscationReflectionHelper remaps the name through the
+     * class it is handed, so a field declared on a superclass comes back unmapped - entitiesById lives on
+     * World, and asking WorldServer for it produced the literal name and a NoSuchFieldException, which is
+     * what silently disabled every removal in this class. And getDeclaredField does not walk up at all.
+     *
+     * Both names are passed because the runtime mapping and the development mapping do not agree
+     * everywhere; whichever one is real here is found, and neither costs anything when it is absent.
+     */
+    private static Object mcField(Object instance, String... names) {
+        if (instance == null) {
+            return null;
+        }
+        for (Class<?> current = instance.getClass(); current != null; current = current.getSuperclass()) {
+            for (String name : names) {
+                try {
+                    Field found = current.getDeclaredField(name);
+                    found.setAccessible(true);
+                    return found.get(instance);
+                } catch (Throwable ignored) {
+                    // try the next candidate
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void setMcField(Object instance, Object value, String... names) {
+        if (instance == null) {
+            return;
+        }
+        for (Class<?> current = instance.getClass(); current != null; current = current.getSuperclass()) {
+            for (String name : names) {
+                try {
+                    Field found = current.getDeclaredField(name);
+                    found.setAccessible(true);
+                    found.set(instance, value);
+                    return;
+                } catch (Throwable ignored) {
+                    // try the next candidate
+                }
+            }
+        }
     }
 
     private static final Field ELEMENT_DATA = field(ArrayList.class, "elementData");
@@ -147,8 +247,8 @@ public final class EntityWiper {
         }
     }
 
-    // Field#get and #set declare a checked IllegalAccessException. Wrapping it here keeps the callers free of
-    // try blocks without ever hiding the failure: an unreachable field is still an error, not a fallback.
+    // Field#get and #set declare a checked IllegalAccessException. wrapping it here keeps the callers free
+    // of try blocks without ever hiding the failure: an unreachable field is still an error.
     private static Object read(Field f, Object target) {
         try {
             return f.get(target);

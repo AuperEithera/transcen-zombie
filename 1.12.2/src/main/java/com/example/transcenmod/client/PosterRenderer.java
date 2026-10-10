@@ -10,10 +10,6 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 
-// Draws the fake death screen straight onto the framebuffer with lwjgl. No Tessellator, no BufferBuilder, no
-// GlStateManager and no TextureManager: the png is uploaded to a GL texture by hand and the quad is emitted
-// with glBegin/glEnd. 1.12.2 is lwjgl 2 (2.9.4-nightly-20150209 per the version json), so the immediate mode
-// calls exist; on lwjgl 3 none of this would compile.
 public final class PosterRenderer {
 
     private PosterRenderer() {}
@@ -54,11 +50,6 @@ public final class PosterRenderer {
     private static int sourceWidth;
     private static int sourceHeight;
 
-    // Call after the vanilla hud is done. The ortho is built from displayWidth/displayHeight, the physical
-    // pixel size, not ScaledResolution: this call sits below minecraft's gui scaling, so the projection has to
-    // be set up in the coordinates the framebuffer is actually in. That is the opposite of what a hud drawn
-    // through the Tessellator needs, and it is why using the scaled size here would leave the image as a
-    // small rectangle in one corner.
     public static void draw(Minecraft mc) {
         ensureTexture();
         if (textureId <= 0) {
@@ -98,10 +89,6 @@ public final class PosterRenderer {
         GL11.glDisable(GL11.GL_BLEND);
         GL11.glDisable(GL11.GL_ALPHA_TEST);
         GL11.glDisable(GL11.GL_FOG);
-        // cull face is the one that made this invisible. vanilla's own blit emits its quad in the opposite
-        // winding to the obvious one (Gui#drawTexturedModalRect goes bottom-left, bottom-right, top-right,
-        // top-left), which is how it survives a cull face left enabled by the world pass. the same winding is
-        // used below, and culling is switched off as well so the quad cannot be dropped either way.
         GL11.glDisable(GL11.GL_CULL_FACE);
         // fixed function texturing is off unless it is asked for. without this the quad is drawn as flat
         // colour and the texture is never sampled at all, which looks exactly like "nothing rendered".
@@ -109,7 +96,7 @@ public final class PosterRenderer {
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
 
-        // winding copied from Gui#drawTexturedModalRect: bottom-left, bottom-right, top-right, top-left.
+        // winding matches Gui#drawTexturedModalRect: bottom-left, bottom-right, top-right, top-left.
         // t=0 is the top of the image and is bound to the y=0 edge, so the poster is not upside down.
         GL11.glBegin(GL11.GL_QUADS);
         GL11.glTexCoord2f(0.0F, 1.0F);
@@ -149,10 +136,6 @@ public final class PosterRenderer {
         }
     }
 
-    // Reads the png out of the jar and uploads it. getResourceAsStream, not a File: the resource is a file on
-    // disk in the dev workspace and an entry inside the jar once built, and only the stream form works for
-    // both. Alpha is forced to 0xff on the way in so the texture itself is opaque as well as being drawn with
-    // blending off.
     private static void ensureTexture() {
         if (textureId > 0 || textureFailed) {
             return;

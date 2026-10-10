@@ -8,25 +8,8 @@ import net.minecraftforge.fml.common.network.simpleimpl.IMessage;
 import net.minecraftforge.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 import net.minecraftforge.fml.relauncher.Side;
 
-/**
- * The 1.12.2 replacement for the 1.16.5 build's {@code NetworkRegistry.newSimpleChannel}.
- *
- * <p>The packet set is unchanged: the death overlay, the client removal, the HUD arm, the HUD sync, the
- * wipe request and the wipe ended signal. What changed is the plumbing -- this generation's
- * {@code SimpleNetworkWrapper} has no {@code ProtocolVersion} object to build, no
- * {@code Supplier<NetworkEvent.Context>} to unwrap and no {@code PacketDistributor} to target a dimension
- * with, so the dimension send walks the player list itself.
- *
- * <p>Ids are explicit rather than inferred. {@code registerMessage} derives a discriminator from a class
- * hash when it is not given one, and that value differs between the development and production jars, which
- * would desynchronise a client and a server running the same version.
- *
- * <p>{@link #init()} must be called from the {@code @Mod} constructor, not from {@code preInit}. See
- * {@code TranscenMod}'s constructor for why.
- */
 public final class NetworkHandler {
 
-    /** The channel name. */
     private static final String CHANNEL_NAME = TranscenMod.MODID + ":main";
 
     private static SimpleNetworkWrapper channel;
@@ -52,20 +35,12 @@ public final class NetworkHandler {
                 id++, Side.CLIENT);
     }
 
-    /** Sends to one player. */
     public static void sendToPlayer(EntityPlayerMP player, IMessage message) {
         if (channel != null && player != null) {
             channel.sendTo(message, player);
         }
     }
 
-    /**
-     * Sends to every player in one dimension.
-     *
-     * <p>This is the 1.16.5 build's {@code PacketDistributor.DIMENSION}, which this generation does not
-     * have. Each dimension is its own {@code WorldServer}, so the walk is exact rather than a filter over
-     * all players.
-     */
     public static void sendToDimension(int dimension, IMessage message) {
         if (channel == null) {
             return;
@@ -93,7 +68,6 @@ public final class NetworkHandler {
         }
     }
 
-    /** Sends from the client to the server. */
     public static void sendToServer(IMessage message) {
         if (channel != null) {
             channel.sendToServer(message);

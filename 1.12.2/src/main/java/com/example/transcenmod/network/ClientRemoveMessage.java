@@ -12,14 +12,6 @@ import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
 
 import java.util.UUID;
 
-/**
- * Drops the client's copy of an annihilated entity and leaves the death puff behind.
- *
- * <p>Broadcast in the same tick as the server-side removal. The server copy is unlinked from the world list
- * and its chunk directly, which is faster than the entity tracker but also bypasses it, so the client is
- * never told through the vanilla path and has to be told here. The puff is spawned on the client rather than
- * broadcast from the server so the visual lands at the exact moment the entity disappears locally.
- */
 public class ClientRemoveMessage implements IMessage {
 
     private UUID entityId;
@@ -72,13 +64,6 @@ public class ClientRemoveMessage implements IMessage {
             return null;
         }
 
-        /**
-         * Looks the entity up by UUID.
-         *
-         * <p>1.12.2's {@code WorldClient} keeps its entity set private, so the walk goes through the
-         * inherited public {@code getLoadedEntityList()}. That is a live view of the same set the renderer
-         * walks, which is what the lookup needs.
-         */
         private static Entity findById(WorldClient level, UUID id) {
             for (Entity candidate : level.getLoadedEntityList()) {
                 if (candidate.getUniqueID().equals(id)) {

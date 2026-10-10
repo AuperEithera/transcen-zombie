@@ -176,10 +176,6 @@ public final class CustomEntityRemover
                 visibleEntityStorage.getClass().getMethod("remove", Object.class).invoke(visibleEntityStorage, entity);
                 serverLevel.getScoreboard().entityRemoved(entity);
 
-                // releasing this set is what lets the uuid be reused,vanilla drops the id during removal
-                // hand surgery skips that,so the id stayed claimed forever and addEntityUuid then refused
-                // every later add of that uuid - silently,with one log warning - the revived zombie never existed
-                // failures here are logged on purpose: swallowing them once is what hid exactly this bug
                 try
                 {
                     Object knownUuids = null;
