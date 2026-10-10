@@ -1,5 +1,13 @@
 # Transcendence Zombie
 
+![1.20.1](https://img.shields.io/badge/minecraft-1.20.1-62b47a?style=flat-square)
+![1.19.2](https://img.shields.io/badge/minecraft-1.19.2-62b47a?style=flat-square)
+![1.16.5](https://img.shields.io/badge/minecraft-1.16.5-62b47a?style=flat-square)
+![Forge](https://img.shields.io/badge/forge-36.2.34%20%7C%2043.3.0%20%7C%2047.4.26-e8a33d?style=flat-square)
+![Java](https://img.shields.io/badge/java-8%20%7C%2017-orange?style=flat-square)
+![License](https://img.shields.io/badge/license-666-blue?style=flat-square)
+![release](https://img.shields.io/github/v/release/AuperEithera/transcen-zombie?style=flat-square&color=red)
+
 A Minecraft mod that adds a single, extremely persistent hostile zombie. Three builds live side by side in
 this repository, one per Minecraft generation. They are separate Gradle projects, not a multi-module build,
 because the API surface differs enough between generations that sharing sources would cost more than it
