@@ -1,0 +1,5 @@
+entity.transcenmod.transcenzombie=§c§lTRANSCENDENCE ZOMBIE
+entity.transcenmod.transcenzombie.name=Transcendence Zombie
+item.transcenmod.transcen_zombie_spawn_egg.name=Spawn §c§lTRANSCENDENCE ZOMBIE
+itemGroup.transcenmod=§c§lTranscendence MOD
+subtitles.transcenmod.music=Hell River flows

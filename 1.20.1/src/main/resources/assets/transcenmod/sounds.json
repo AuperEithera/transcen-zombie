@@ -1,0 +1,12 @@
+{
+  "music.transcendence": {
+    "category": "music",
+    "subtitle": "subtitles.transcenmod.music",
+    "sounds": [
+      {
+        "name": "transcenmod:music/hell_river",
+        "stream": true
+      }
+    ]
+  }
+}

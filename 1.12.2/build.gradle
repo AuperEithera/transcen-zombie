@@ -1,0 +1,133 @@
+// Transcendence Zombie -- Minecraft 1.12.2 / Forge 14.23.5.2860
+//
+// Toolchain: Gradle 4.10.3 + ForgeGradle 3.+ + MCP stable_39 + Java 8. That is what the 1.12.x branch of
+// the Forge MDK ships, and 1.12.2 predates Mojang official mappings, so MCP is the only source of
+// readable names for this generation.
+//
+// The mod ships as a coremod rather than with the Sponge Mixin configuration the 1.16.5 build used:
+// 1.12.2's Forge has no Mixin loader, so the two injections that generation performed are done here
+// through Forge's own IClassTransformer hook. That keeps the jar self-contained -- no MixinBootstrap,
+// no separate coremod jar.
+//
+// Two things in the manifest are load-bearing and neither has an equivalent in the newer builds:
+//
+//   FMLCorePlugin                without it the transformer class is never constructed
+//   FMLCorePluginContainsFMLMod  without it the @Mod in the same jar is never loaded
+//   FMLAT                        without it the access transformer is never applied AT ALL
+//
+// The FMLAT one is the trap. 1.16.5 discovers META-INF/accesstransformer.cfg on its own and the
+// mods.toml can name it explicitly; 1.12.2 only reads the file if the jar manifest lists it, through
+// CoreModManager's `mfAttributes.getValue(ModAccessTransformer.FMLAT)`. Without the attribute the AT is
+// silently ignored: the build still succeeds, the development workspace still resolves the widened
+// members (ForgeGradle applies the file from the resource tree while compiling), and the reobfuscated
+// jar then fails at runtime with "overrides final method func_110143_aJ" the moment the entity loads.
+
+buildscript {
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:3.+'
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle'
+
+version = mod_version
+group = mod_group_id
+archivesBaseName = mod_id
+
+sourceCompatibility = targetCompatibility = compileJava.sourceCompatibility = compileJava.targetCompatibility = '1.8'
+
+minecraft {
+    // stable_39 is the final MCP release for 1.12.2 and the names every 1.12.2 mod is written against.
+    mappings channel: 'stable', version: '39-1.12'
+
+    // Widens the two vanilla members the mod has to override. Read from the resource tree so the same
+    // file is both what compiles and what ships.
+    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+        }
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+}
+
+processResources {
+    inputs.property 'version', project.version
+    // Read straight from gradle.properties: ForgeGradle 3's UserDevExtension has no `version` accessor,
+    // that only existed on ForgeGradle 2's ForgeExtension.
+    inputs.property 'mcversion', minecraft_version
+
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+        expand 'version': project.version,
+                'mcversion': minecraft_version,
+                'modid': mod_id,
+                'modname': mod_name,
+                'moddescription': mod_description,
+                'modauthors': mod_authors,
+                'modlicense': mod_license
+    }
+
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}
+
+jar {
+    manifest {
+        attributes([
+                'Specification-Title'        : mod_id,
+                'Specification-Vendor'       : mod_authors,
+                'Specification-Version'      : '1',
+                'Implementation-Title'       : project.name,
+                'Implementation-Version'     : project.version,
+                'Implementation-Vendor'      : mod_authors,
+                'FMLCorePlugin'              : 'com.example.transcenmod.core.TranscenCorePlugin',
+                'FMLCorePluginContainsFMLMod': 'true',
+                'ForceLoadAsMod'             : 'true',
+                // Silences "does not have a MCVersion annotation" and keeps the coremod off any other
+                // Minecraft version.
+                'MCVersion'                  : minecraft_version,
+                // See the header: without this the access transformer below is never read.
+                'FMLAT'                      : 'accesstransformer.cfg'
+        ])
+    }
+}
+
+jar.finalizedBy('reobfJar')
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-encoding', 'UTF-8']
+}
+
+// FML cannot load exploded directories as mods. Eclipse merges classes and resources when debugging, and
+// ForgeGradle 3 no longer jars the output during debugging the way FG2 did, so the two output directories
+// have to be pointed at the same place for the run tasks to find the mod.
+sourceSets.each {
+    def dir = layout.buildDirectory.file("sourcesSets/$it.name").get().asFile
+    it.output.resourcesDir = dir
+    it.java.outputDir = dir
+}
+
+// The coremod verifier. Kept out of `build` on purpose -- see the file's own header.
+apply from: 'verify-tasks.gradle'

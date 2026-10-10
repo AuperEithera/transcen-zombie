@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.example.transcenmod.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "refmap": "transcenmod.refmap.json",
+  "mixins": [
+    "PlayerHealthMixin"
+  ],
+  "client": [
+    "HudSuppressionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

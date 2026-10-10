@@ -1,0 +1,75 @@
+// Transcendence Zombie -- standalone verifier for the coremod's bytecode injection.
+//
+// The coremod is the one part of this port that a compile cannot check: a transformer that emits
+// unverifiable bytecode, or that appends its injection after the original return, produces a jar that
+// builds cleanly and then either crashes with a VerifyError at class load or runs with the feature
+// silently dead. Both of those happened while writing it. This compiles two stand-in copies of the real
+// targets, runs the real TranscenTransformer over them, loads the results so the JVM verifier has to
+// accept them, and asserts that both injections actually take effect.
+//
+// Run with:  gradlew verifyTransformer
+//
+// It is deliberately not part of `build`. It is a development check, and wiring it into the main build
+// would put a class-loading test in the path of every packaging run for no benefit.
+
+configurations {
+    verifierAsm
+}
+
+dependencies {
+    verifierAsm 'org.ow2.asm:asm:6.2'
+    verifierAsm 'org.ow2.asm:asm-tree:6.2'
+}
+
+task compileVerifierStandins(type: JavaCompile, dependsOn: 'classes') {
+    description = 'Compiles the stand-in Minecraft classes and the coremod test harness.'
+    // Compiled against the JDK and the main output only. Including the real Minecraft artifact would
+    // defeat the point: the harness has to be handed the *untransformed* originals.
+    source = fileTree('dev-tests/src') { include '**/*.java' }
+    // `minecraft` is the ForgeGradle configuration holding the full Minecraft-and-Forge classpath, which
+    // is where launchwrapper (and therefore IClassTransformer) comes from. compileClasspath alone does not
+    // carry it, because the mod's own sources never name that interface.
+    classpath = files(sourceSets.main.output) +
+            configurations.verifierAsm +
+            configurations.minecraft
+    destinationDir = file("$buildDir/verifier/classes")
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '1.8'
+    targetCompatibility = '1.8'
+}
+
+task verifyTransformer(type: JavaExec, dependsOn: 'compileVerifierStandins') {
+    description = 'Runs the coremod transformer over stand-in classes and verifies both injections.'
+    group = 'verification'
+    classpath = files(sourceSets.main.output) +
+            configurations.verifierAsm +
+            configurations.minecraft +
+            files("$buildDir/verifier/classes")
+    main = 'TransformerHarness'
+    args = [
+            file("$buildDir/verifier/classes").absolutePath,
+            file("$buildDir/verifier/out").absolutePath
+    ]
+}
+
+// ---------------------------------------------------------------------------------------------
+// Note on end-to-end testing
+// ---------------------------------------------------------------------------------------------
+//
+// There is deliberately no runServerSmoke task here, and the reason is worth recording because it looks
+// like an omission.
+//
+// `gradlew runServer` cannot load this mod -- or any mod -- in this workspace. FMLContainer's construction
+// calls FMLNetworkHandler.registerChannel(Loader.instance().activeModContainer(), side), and in a
+// dedicated-server development launch that argument is null. NetworkRegistry.newChannel then evaluates
+// `name.startsWith("FML") && !("FML".equals(container.getModId()))` on Forge's own channel name and throws
+// a NullPointerException on the null container, forcing FML out of PREINITIALIZATION.
+//
+// That was measured, not assumed: a separate pristine ForgeGradle 3 project for 1.12.2 containing one empty
+// @Mod class and no other code crashes at the identical line. It is a property of the development launch,
+// not of this mod. The built jar was therefore verified end to end against a real (non-development) Forge
+// 1.12.2 server instead. That run is what caught the two packaging bugs documented in build.gradle: the
+// object-form mcmod.info, and the missing FMLAT manifest attribute.
+//
+// `gradlew verifyTransformer` above is the part of the check that can run here, and it is the part that
+// matters most: it is the only thing that can catch a coremod emitting unverifiable bytecode.
