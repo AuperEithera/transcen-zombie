@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.example.transcenmod.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "transcenmod.refmap.json",
+  "mixins": [
+    "PlayerHealthMixin",
+    "ForgeGuiOverlayMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
