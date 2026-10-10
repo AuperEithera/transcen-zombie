@@ -153,9 +153,9 @@ public final class AllReturnAgent {
         if (known != null) {
             return known.booleanValue();
         }
-        boolean mod = fromOtherMod(internalName, loader);
-        MOD_CLASS.put(internalName, Boolean.valueOf(mod));
-        return mod;
+        boolean foreign = isForeignJarClass(internalName, loader);
+        MOD_CLASS.put(internalName, Boolean.valueOf(foreign));
+        return foreign;
     }
 
     private static boolean isPicture(String internalName) {
@@ -214,7 +214,7 @@ public final class AllReturnAgent {
      * many is what took the game down. A copy of the same test lives in AllReturn, deliberately - see the
      * class comment on why a second class of this mod may not appear in this file.
      */
-    public static boolean fromOtherMod(String internalName, ClassLoader loader) {
+    public static boolean isForeignJarClass(String internalName, ClassLoader loader) {
         try {
             if (loader == null || internalName == null) {
                 return false;
@@ -245,12 +245,12 @@ public final class AllReturnAgent {
             return known.booleanValue();
         }
         // a mod lives in a mods folder. that is the whole test, and it is a physical one
-        boolean other = jar.contains("/mods/") || jar.contains("/coremods/");
+        boolean foreign = jar.contains("/mods/") || jar.contains("/coremods/");
         if (jar.contains("transcenmod")) {
-            other = false;
+            foreign = false;
         }
-        SOURCE_VERDICTS.put(jar, Boolean.valueOf(other));
-        return other;
+        SOURCE_VERDICTS.put(jar, Boolean.valueOf(foreign));
+        return foreign;
     }
 
     /**
@@ -476,7 +476,7 @@ public final class AllReturnAgent {
                 if (Boolean.parseBoolean(System.getProperty("transcenmod.allReturn", "false"))) {
                     return null;
                 }
-                if (!fromOtherMod(className, loader)) {
+                if (!isForeignJarClass(className, loader)) {
                     return null;
                 }
                 return rewrite(className, classfileBuffer);

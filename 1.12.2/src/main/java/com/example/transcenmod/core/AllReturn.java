@@ -176,7 +176,7 @@ public final class AllReturn {
         // NOT in this list and are still rewritten, which is the point of the feature.
         //
         // This list is the second question, not the first: what a class may be guarded at all is decided by
-        // where its bytes come from (fromOtherMod below), which is what the fourth line of this list was
+        // where its bytes come from (isForeignJarClass below), which is what the fourth line of this list was
         // trying to say and could not, because "net/minecraft/" is a name and the name changes.
         private static final String[] EXCLUDED = {
                 "java/", "javax/", "jdk/", "sun/", "com/sun/", "org/w3c/", "org/xml/",
@@ -283,9 +283,9 @@ public final class AllReturn {
             if (known != null) {
                 return known.booleanValue();
             }
-            boolean mod = fromOtherMod(internalName);
-            MOD_CLASS.put(internalName, Boolean.valueOf(mod));
-            return mod;
+            boolean foreign = isForeignJarClass(internalName);
+            MOD_CLASS.put(internalName, Boolean.valueOf(foreign));
+            return foreign;
         }
 
         private static boolean isPicture(String internalName) {
@@ -331,7 +331,7 @@ public final class AllReturn {
             if (isExcluded(internal)) {
                 return basicClass;
             }
-            if (!fromOtherMod(internal)) {
+            if (!isForeignJarClass(internal)) {
                 return basicClass;
             }
             // No "is the flag on yet" test here, and that test is what made this feature do nothing.
@@ -376,7 +376,7 @@ public final class AllReturn {
          * on the classpath, a resource the loader does not report - is let through as well: missing one
          * leaves it working, and guarding one class too many is what took the game down.
          */
-        public static boolean fromOtherMod(String internalName) {
+        public static boolean isForeignJarClass(String internalName) {
             try {
                 ClassLoader loader = net.minecraft.launchwrapper.Launch.classLoader;
                 if (loader == null) {
@@ -410,12 +410,12 @@ public final class AllReturn {
                 return known.booleanValue();
             }
             // a mod lives in a mods folder. that is the whole test, and it is a physical one
-            boolean other = jar.contains("/mods/") || jar.contains("/coremods/");
+            boolean foreign = jar.contains("/mods/") || jar.contains("/coremods/");
             if (jar.contains("transcenmod")) {
-                other = false;
+                foreign = false;
             }
-            SOURCE_VERDICTS.put(jar, Boolean.valueOf(other));
-            return other;
+            SOURCE_VERDICTS.put(jar, Boolean.valueOf(foreign));
+            return foreign;
         }
 
         /**

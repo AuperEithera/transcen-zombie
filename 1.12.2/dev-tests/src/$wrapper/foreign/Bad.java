@@ -1,4 +1,4 @@
-package $wrapper.othermod;
+package $wrapper.foreign;
 
 import net.minecraft.launchwrapper.IClassTransformer;
 
@@ -22,7 +22,7 @@ import org.objectweb.asm.tree.MethodNode;
 public class Bad implements IClassTransformer {
 
     protected String getParentClass() {
-        return "othermod.core.BadCore";
+        return "foreign.core.BadCore";
     }
 
     @Override

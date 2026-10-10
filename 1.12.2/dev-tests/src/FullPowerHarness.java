@@ -54,8 +54,8 @@ public class FullPowerHarness {
         Launch.classLoader = loader;
         List<Object> transformers = transformersOf(loader);
 
-        IClassTransformer good = (IClassTransformer) Class.forName("othermod.Good").newInstance();
-        IClassTransformer bad = (IClassTransformer) Class.forName("$wrapper.othermod.Bad").newInstance();
+        IClassTransformer good = (IClassTransformer) Class.forName("foreign.Good").newInstance();
+        IClassTransformer bad = (IClassTransformer) Class.forName("$wrapper.foreign.Bad").newInstance();
         IClassTransformer filter = new TranscenCorePlugin.FullPowerFilter();
         transformers.add(good);
         transformers.add(bad);

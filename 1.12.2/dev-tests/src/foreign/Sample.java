@@ -1,4 +1,4 @@
-package othermod;
+package foreign;
 
 /**
  * Stand-in for a foreign class, the thing the AllReturn rewrite is aimed at. It is outside every

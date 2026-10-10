@@ -1,4 +1,4 @@
-package othermod;
+package foreign;
 
 import net.minecraft.launchwrapper.IClassTransformer;
 

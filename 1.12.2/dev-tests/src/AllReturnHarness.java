@@ -47,7 +47,7 @@ import java.util.jar.JarOutputStream;
  */
 public final class AllReturnHarness {
 
-    private static final String SAMPLE = "othermod.Sample";
+    private static final String SAMPLE = "foreign.Sample";
     private static final String FLAG_PROPERTY = "transcenmod.allReturn";
     private static final String FORGE_FIRST_CLASS = "net.minecraftforge.fml.common.Loader";
 
@@ -62,7 +62,7 @@ public final class AllReturnHarness {
 
         // 1 and 4: what is rewritten, and what is left alone
         byte[] sample = Files.readAllBytes(new File(classesDir, SAMPLE.replace('.', '/') + ".class").toPath());
-        byte[] rewritten = AllReturnAgent.rewrite("othermod/Sample", sample);
+        byte[] rewritten = AllReturnAgent.rewrite("foreign/Sample", sample);
         check("a class from a mod jar is rewritten", rewritten != null && rewritten.length != sample.length);
 
         leaveAlone("net/minecraft/world/World");
@@ -177,7 +177,7 @@ public final class AllReturnHarness {
         File mods = new File(classesDir, "mods");
         File libraries = new File(classesDir, "libraries");
         pack(classesDir, new File(mods, "harness-standins.jar"), null);
-        pack(classesDir, new File(libraries, "harness-library.jar"), "othermod/Lib");
+        pack(classesDir, new File(libraries, "harness-library.jar"), "foreign/Lib");
         net.minecraft.launchwrapper.Launch.classLoader = new net.minecraft.launchwrapper.LaunchClassLoader(
                 new URL[] {new File(mods, "harness-standins.jar").toURI().toURL(),
                         new File(libraries, "harness-library.jar").toURI().toURL()});
@@ -206,11 +206,11 @@ public final class AllReturnHarness {
 
         // and the source rule itself, which is what keeps minecraft, forge and the libraries out of it
         check("a class from a mod jar is guarded",
-                AllReturn.Transformer.fromOtherMod(SAMPLE.replace('.', '/')));
+                AllReturn.Transformer.isForeignJarClass(SAMPLE.replace('.', '/')));
         check("a class from a library jar is left alone",
-                !AllReturn.Transformer.fromOtherMod("othermod/Lib"));
+                !AllReturn.Transformer.isForeignJarClass("foreign/Lib"));
         check("a class the loader cannot name is left alone",
-                !AllReturn.Transformer.fromOtherMod("java/lang/String"));
+                !AllReturn.Transformer.isForeignJarClass("java/lang/String"));
 
         System.setProperty(FLAG_PROPERTY, "false");
         AllReturn.allReturn = false;
