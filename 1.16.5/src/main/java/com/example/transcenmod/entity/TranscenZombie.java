@@ -231,23 +231,19 @@ public class TranscenZombie extends ZombieEntity {
     }
 
     // returns false on purpose
-    // LivingEntity#hurt is what produces the hurt feedback: hurtTime drives the red damage overlay
-    // and the caller plays the hurt sound off the same result,a true return is exactly what triggers
-    // both so reporting no damage taken is the only way to get a zombie that neither flashes red nor
-    // grunts when it burns or is hit
-    // the attacker still dies, that is the mod's whole point and independent of this return value
-    // turns away the damage that was killing revived zombies and making them look duplicated
-    // the log gave it away: entities crammed into the same block take continuous suffocation damage
-    // and when several zombies briefly share a spot - exactly what a revival does - they damage each
-    // other to death, each death made the sweep raise a replacement and that crowded the spot again
-    // only cramming is refused, everything else still goes through hurt so a legitimate removal by
-    // another mod's weapon is unaffected
+    // a revival briefly stacks several zombies in one block and they suffocate each other to death
+    // each death made the sweep raise a replacement into the same spot so it read as a duplication bug
     private static boolean isCramming(DamageSource source) {
         return source != null && "cramming".equals(source.getDamageType());
     }
 
     @Override
     public boolean attackEntityFrom(DamageSource source, float amount) {
+        // returns false on purpose
+        // hurtTime drives the red overlay and the caller plays the hurt sound off the same result so true
+        // triggers both,false is the only way to get a zombie that never flashes red or grunts when hit
+        // the attacker still dies, that is the mod's whole point and independent of this value
+        // only cramming is refused, everything else still reaches hurt so another mod's weapon still lands
         if (isCramming(source)) {
             return false;
         }
@@ -262,13 +258,12 @@ public class TranscenZombie extends ZombieEntity {
                 source.getDamageType(),
                 attacker == null ? "none" : attacker.getClass().getName());
 
-        // the retaliation is not just losing health, the attacker is torn out of the world outright
-        // going through the same path as the zombie means the player is cleared by the identical
-        // mechanism rather than by a second weaker one
-        // it detaches them from the level's storages and empties their client tracking set so the
+        // retaliation is not just losing health, the attacker goes through the same removal path as the
+        // zombie rather than a second weaker one
+        // that detaches them from the level's storages and empties their client tracking set so the
         // server copy is gone at once and the client keeps rendering its own copy for the usual two
-        // seconds, it deliberately does not ban the player's class so a player who respawns or rejoins
-        // comes back normally - being deleted is a consequence of the attack not a permanent lockout
+        // seconds, the player's class is deliberately not banned so a respawn or a rejoin comes back
+        // normally - being deleted is a consequence of the attack not a permanent lockout
         if (attacker instanceof net.minecraft.entity.player.ServerPlayerEntity) { net.minecraft.entity.player.ServerPlayerEntity player = (net.minecraft.entity.player.ServerPlayerEntity) attacker;
             // retaliation outranks the egg so this is set before anything else runs,it makes the
             // injected getHealth report zero for this player which means the clearing below cannot be

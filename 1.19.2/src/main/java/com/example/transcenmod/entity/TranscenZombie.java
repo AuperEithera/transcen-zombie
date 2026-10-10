@@ -199,21 +199,18 @@ public class TranscenZombie extends Zombie {
         // no super call on purpose, it would set the removal flag and the entity would stop rendering,
         // being ticked and being found by every storage query
     }
-    // hurtTime drives the red damage overlay and the caller plays the hurt sound off the same return,
-    // so false is the only way to stop both the flash and the grunt
-    // the attacker still dies, that is this mod's whole point and independent of this value
-    // turns away the damage that was killing revived zombies and making them look duplicated
-    // entities crammed into one block take suffocation damage, a revival briefly shares a spot so
-    // they damaged each other to death, each death made the sweep raise a replacement into the same
-    // crowded spot - the log line was hurt by null, source cramming
-    // a symptom, not the cause: the earlier work on UUIDs,chunk loading and spawn positions was
-    // aimed at the wrong thing
+    // a revival briefly shares a spot so the zombies take suffocation damage and kill each other
+    // each death made the sweep raise a replacement into the same crowded spot
     private static boolean isCramming(DamageSource source) {
         return source != null && "cramming".equals(source.getMsgId());
     }
 
     @Override
     public boolean hurt(DamageSource source, float amount) {
+        // returns false on purpose
+        // hurtTime drives the red overlay and the caller plays the hurt sound off the same return,true
+        // triggers both,false is the only way to stop the flash and the grunt
+        // the attacker still dies, that is this mod's whole point and independent of this value
         if (isCramming(source)) {
             return false;
         }

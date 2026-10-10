@@ -190,19 +190,18 @@ public class TranscenZombie extends Zombie {
         // deliberately no super call,that would set the removal flag and stop rendering,ticking and every storage query
     }
 
-    // returns false on purpose: LivingEntity#hurt is what drives the hurt feedback
-    // hurtTime is the red overlay and the caller plays the hurt sound off the same result,true triggers both
-    // false is the only way to get a zombie that never flashes red or grunts when hit
-    // --
-    // a revival briefly stacks several zombies in one block and cramming damage would kill them there
-    // each death made the sweep raise a replacement which crowded the spot again,a cycle that reads as a duplication bug
-    // only cramming is refused,everything else still reaches hurt() so another mod's weapon still lands
+    // a revival briefly stacks several zombies in one block and cramming damage kills them there
+    // each death made the sweep raise a replacement into the same spot so it read as a duplication bug
     private static boolean isCramming(DamageSource source) {
         return source != null && "cramming".equals(source.getMsgId());
     }
 
     @Override
     public boolean hurt(DamageSource source, float amount) {
+        // returns false on purpose
+        // hurtTime is the red overlay and the caller plays the hurt sound off the same result so true
+        // triggers both,false is the only way to get a zombie that never flashes red or grunts when hit
+        // only cramming is refused,everything else still reaches hurt() so another mod's weapon lands
         if (isCramming(source)) {
             return false;
         }
