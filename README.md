@@ -1,4 +1,3 @@
-# Transcendence Zombie
 
 ![1.20.1](https://img.shields.io/badge/minecraft-1.20.1-62b47a?style=flat-square)
 ![1.19.2](https://img.shields.io/badge/minecraft-1.19.2-62b47a?style=flat-square)
