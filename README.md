@@ -9,6 +9,6 @@
 ![License](https://img.shields.io/badge/license-666-blue?style=flat-square)
 ![release](https://img.shields.io/github/v/release/AuperEithera/transcen-zombie?style=flat-square&color=red)
 
-左键开关防御并且清除生物。
-1.12.2左键清除全部生物，shift右键开启allReturn 拦截core看配置文件
-1.16.5会弱一些。1.12.2会强一些
+-左键开关防御并且清除生物。
+-1.12.2左键清除全部生物，shift右键开启allReturn 拦截core看配置文件
+-1.16.5会弱一些。1.12.2会强一些
